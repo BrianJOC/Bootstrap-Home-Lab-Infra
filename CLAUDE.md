@@ -26,12 +26,13 @@ Stages have hard dependencies — do not reorder without a clear dependency reas
 ## Agent Pipeline
 
 ```
-workflow-architect → spec-writer → software-architect → [implementation] → code-reviewer → security-engineer
+requirements-analyst → workflow-architect → spec-writer → software-architect → [implementation] → code-reviewer → security-engineer
 ```
 
 | Agent | Role |
 |-------|------|
 | `agents-orchestrator` | Coordinates pipeline; enforces stage order; routes work between agents |
+| `requirements-analyst` | Discovery and end-state definition; produces PRD before any workflow mapping |
 | `workflow-architect` | Maps full workflow trees (happy path, failures, recovery) before any spec |
 | `spec-writer` | Produces acceptance criteria, I/O contracts, and test cases from workflow maps |
 | `software-architect` | Designs Ansible role structure, Terraform module layout, TUI architecture, ADRs |
