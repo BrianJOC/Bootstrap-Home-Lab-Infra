@@ -266,8 +266,11 @@ a clean target for every run.
 
 **Base image**: A minimal `qcow2` snapshot built with Packer (HCL):
 - Ubuntu (x86 + ARM builds)
-- SSH enabled
+- SSH enabled with key-based auth only (password auth disabled)
 - `ansible` user with passwordless sudo
+- Test keypair embedded at build time: public key in `~/.ssh/authorized_keys`;
+  private key stored at `test/keys/test_id_ed25519` in the repo (test-only key,
+  not a secret — never used outside local QEMU test VMs)
 - No other services — clean slate
 
 **Two-phase image lifecycle:**
