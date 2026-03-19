@@ -1,0 +1,53 @@
+---
+- name: Create cert directory
+  ansible.builtin.file:
+    path: "{{ cert_dir }}"
+    state: directory
+    mode: "0755"
+
+# Idempotency: check if cert exists and is valid (not expiring within 30 days)
+- name: Check if certificate file already exists
+  ansible.builtin.stat:
+    path: "{{ cert_dir }}/certificates/{{ internal_domain }}.crt"
+  register: cert_stat
+
+- name: Check certificate expiry if cert exists
+  ansible.builtin.command: >
+    openssl x509 -checkend 2592000 -noout
+    -in {{ cert_dir }}/certificates/{{ internal_domain }}.crt
+  register: cert_expiry_check
+  changed_when: false
+  failed_when: false
+  when: cert_stat.stat.exists
+
+- name: Set cert_valid fact
+  ansible.builtin.set_fact:
+    cert_valid: >-
+      {{ cert_stat.stat.exists and
+         (cert_expiry_check.rc is defined and cert_expiry_check.rc == 0) }}
+
+- name: Issue TLS certificate via Cloudflare DNS-01
+  ansible.builtin.command: >
+    {{ lego_install_dir }}/lego
+    --email={{ admin_email }}
+    --domains=*.{{ internal_domain }}
+    --domains={{ internal_domain }}
+    --dns=cloudflare
+    --server={{ acme_server_url }}
+    --path={{ cert_dir }}
+    run
+  environment:
+    CLOUDFLARE_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
+    CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
+    LEGO_CA_CERTIFICATES: ""
+  when: not cert_valid
+  no_log: true
+  register: lego_run
+
+- name: Write cert meta.json
+  ansible.builtin.shell: |
+    EXPIRY=$(openssl x509 -enddate -noout -in {{ cert_dir }}/certificates/{{ internal_domain }}.crt | cut -d= -f2)
+    echo '{"expiry":"'"$EXPIRY"'","domain":"{{ internal_domain }}","san":["*.{{ internal_domain }}","{{ internal_domain }}"],"issuer":"lego"}' \
+      > {{ cert_dir }}/certificates/meta.json
+  when: not cert_valid
+  changed_when: true

@@ -1,0 +1,41 @@
+---
+- name: Install prerequisites for PostgreSQL apt repo
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - curl
+      - lsb-release
+    state: present
+    update_cache: true
+
+- name: Add PostgreSQL apt signing key
+  ansible.builtin.shell: |
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
+    gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+  args:
+    creates: /usr/share/keyrings/postgresql.gpg
+
+- name: Add PostgreSQL apt repository (pgdg)
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/postgresql.gpg]
+      https://apt.postgresql.org/pub/repos/apt
+      {{ ansible_distribution_release }}-pgdg main
+    state: present
+    filename: pgdg
+    update_cache: true
+
+- name: Install PostgreSQL
+  ansible.builtin.apt:
+    name:
+      - "postgresql-{{ postgresql_version }}"
+      - "postgresql-client-{{ postgresql_version }}"
+      - python3-psycopg2
+    state: present
+    update_cache: true
+
+- name: Ensure PostgreSQL service is started and enabled
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgresql_version }}-main"
+    state: started
+    enabled: true

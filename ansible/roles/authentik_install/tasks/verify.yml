@@ -1,0 +1,21 @@
+---
+- name: Check Authentik server container is running
+  community.docker.docker_container_info:
+    name: authentik-server
+  register: authentik_verify_info
+  failed_when: >
+    authentik_verify_info.container is not defined or
+    not authentik_verify_info.container.State.Running | default(false)
+
+- name: Assert Authentik API responds
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/root/config/"
+    method: GET
+    status_code: [200]
+    validate_certs: false
+  register: authentik_root_config
+  failed_when: authentik_root_config.status != 200
+
+- name: Log Authentik verification result
+  ansible.builtin.debug:
+    msg: "Authentik is running and API is responsive at port {{ authentik_port_http }}"

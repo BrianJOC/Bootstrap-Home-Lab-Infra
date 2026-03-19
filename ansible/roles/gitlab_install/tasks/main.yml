@@ -1,0 +1,21 @@
+---
+# Idempotency gate: check if GitLab is already running
+- name: Check if GitLab runsvdir is active
+  ansible.builtin.command: gitlab-ctl status
+  register: gitlab_status_check
+  changed_when: false
+  failed_when: false
+
+- name: Set gitlab_already_running fact
+  ansible.builtin.set_fact:
+    gitlab_already_running: "{{ gitlab_status_check.rc == 0 }}"
+
+- name: Install GitLab CE
+  ansible.builtin.include_tasks: install.yml
+  when: not gitlab_already_running
+
+- name: Configure GitLab
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Verify GitLab
+  ansible.builtin.include_tasks: verify.yml

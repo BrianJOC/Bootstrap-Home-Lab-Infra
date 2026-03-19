@@ -1,0 +1,24 @@
+---
+- name: Assert PostgreSQL service is active
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgresql_version }}-main"
+  register: pg_verify_status
+  failed_when: pg_verify_status.status.ActiveState != "active"
+
+- name: Assert each database exists
+  community.postgresql.postgresql_query:
+    db: "{{ item.name }}"
+    query: "SELECT 1"
+  loop: "{{ postgresql_databases }}"
+  become_user: postgres
+
+- name: Assert PostgreSQL port is listening
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ postgresql_port }}"
+    timeout: 10
+    state: started
+
+- name: Log PostgreSQL verification result
+  ansible.builtin.debug:
+    msg: "PostgreSQL {{ postgresql_version }} running on port {{ postgresql_port }}. All service databases verified."

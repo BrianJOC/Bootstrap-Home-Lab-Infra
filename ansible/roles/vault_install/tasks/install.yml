@@ -1,0 +1,137 @@
+---
+- name: Set vault_arch fact
+  ansible.builtin.set_fact:
+    vault_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Install unzip dependency
+  ansible.builtin.apt:
+    name: unzip
+    state: present
+    update_cache: true
+
+- name: Create temp directory for vault download
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: vault
+  register: vault_tmp_dir
+
+- name: Download Vault binary zip
+  ansible.builtin.get_url:
+    url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_{{ vault_arch }}.zip"
+    dest: "{{ vault_tmp_dir.path }}/vault.zip"
+    mode: "0644"
+
+- name: Unzip Vault binary
+  ansible.builtin.unarchive:
+    src: "{{ vault_tmp_dir.path }}/vault.zip"
+    dest: "{{ vault_tmp_dir.path }}"
+    remote_src: true
+
+- name: Install vault binary
+  ansible.builtin.copy:
+    src: "{{ vault_tmp_dir.path }}/vault"
+    dest: /usr/local/bin/vault
+    mode: "0755"
+    remote_src: true
+
+- name: Clean up temp directory
+  ansible.builtin.file:
+    path: "{{ vault_tmp_dir.path }}"
+    state: absent
+
+# Set vault capabilities for IPC_LOCK
+- name: Set vault binary capabilities
+  community.general.capabilities:
+    path: /usr/local/bin/vault
+    capability: cap_ipc_lock=+ep
+    state: present
+
+# Create vault system user
+- name: Create vault system user
+  ansible.builtin.user:
+    name: "{{ vault_user }}"
+    system: true
+    shell: /bin/false
+    home: "{{ vault_data_dir }}"
+    create_home: false
+
+# Create required directories
+- name: Create Vault data directory
+  ansible.builtin.file:
+    path: "{{ vault_data_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+- name: Create Vault config directory
+  ansible.builtin.file:
+    path: "{{ vault_config_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+- name: Create Vault TLS directory
+  ansible.builtin.file:
+    path: "{{ vault_config_dir }}/tls"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+- name: Create Vault log directory
+  ansible.builtin.file:
+    path: /var/log/vault
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+# Copy TLS certs to vault config path
+- name: Copy TLS fullchain cert to Vault TLS dir
+  ansible.builtin.copy:
+    src: "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.crt"
+    dest: "{{ vault_config_dir }}/tls/fullchain.pem"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0644"
+    remote_src: true
+  notify: restart vault
+
+- name: Copy TLS private key to Vault TLS dir
+  ansible.builtin.copy:
+    src: "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.key"
+    dest: "{{ vault_config_dir }}/tls/privkey.pem"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0400"
+    remote_src: true
+  notify: restart vault
+
+# Template vault.hcl config
+- name: Template Vault configuration file
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_dir }}/vault.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0640"
+  notify: restart vault
+
+# Template systemd unit
+- name: Template Vault systemd service unit
+  ansible.builtin.template:
+    src: vault.service.j2
+    dest: /etc/systemd/system/vault.service
+    mode: "0644"
+  notify: restart vault
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Enable Vault service
+  ansible.builtin.systemd:
+    name: vault
+    enabled: true

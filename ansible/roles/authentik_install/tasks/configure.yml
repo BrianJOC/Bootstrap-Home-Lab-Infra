@@ -1,0 +1,97 @@
+---
+# Wait for Authentik API to be available
+- name: Wait for Authentik API to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/users/"
+    method: GET
+    status_code: [200, 401, 403]
+    validate_certs: false
+  register: authentik_api_check
+  retries: 30
+  delay: 10
+  until: authentik_api_check.status in [200, 401, 403]
+
+# Get API token for further configuration
+- name: Get Authentik API token
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/tokens/"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+    validate_certs: false
+  register: authentik_token_check
+  no_log: true
+  when: authentik_bootstrap_token is defined
+
+# Create OIDC provider for Vault
+- name: Check if Vault OIDC provider exists
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=vault"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+    validate_certs: false
+  register: vault_oidc_check
+  no_log: true
+  when: authentik_bootstrap_token is defined
+
+- name: Create Vault OIDC provider
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      name: vault
+      client_type: confidential
+      redirect_uris: "https://vault.{{ internal_domain }}:8200/ui/vault/auth/oidc/oidc/callback"
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      signing_key: null
+    status_code: [201]
+    validate_certs: false
+  when:
+    - authentik_bootstrap_token is defined
+    - vault_oidc_check.json.count is defined
+    - vault_oidc_check.json.count == 0
+  no_log: true
+
+# Create OIDC provider for GitLab
+- name: Check if GitLab OIDC provider exists
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=gitlab"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+    validate_certs: false
+  register: gitlab_oidc_check
+  no_log: true
+  when: authentik_bootstrap_token is defined
+
+- name: Create GitLab OIDC provider
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      name: gitlab
+      client_type: confidential
+      redirect_uris: "https://gitlab.{{ internal_domain }}/users/auth/openid_connect/callback"
+      sub_mode: hashed_user_id
+      include_claims_in_id_token: true
+      signing_key: null
+    status_code: [201]
+    validate_certs: false
+  when:
+    - authentik_bootstrap_token is defined
+    - gitlab_oidc_check.json.count is defined
+    - gitlab_oidc_check.json.count == 0
+  no_log: true

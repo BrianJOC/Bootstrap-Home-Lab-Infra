@@ -1,0 +1,50 @@
+---
+- name: Install GitLab CE dependencies
+  ansible.builtin.apt:
+    name:
+      - curl
+      - openssh-server
+      - ca-certificates
+      - tzdata
+      - perl
+    state: present
+    update_cache: true
+
+- name: Download GitLab CE setup script
+  ansible.builtin.get_url:
+    url: "https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh"
+    dest: /tmp/gitlab-setup.sh
+    mode: "0755"
+
+- name: Run GitLab CE apt repo setup
+  ansible.builtin.command: bash /tmp/gitlab-setup.sh
+  args:
+    creates: /etc/apt/sources.list.d/gitlab_gitlab-ce.list
+
+- name: Install GitLab CE package
+  ansible.builtin.apt:
+    name: "{{ gitlab_version }}"
+    state: present
+    update_cache: true
+  environment:
+    EXTERNAL_URL: "https://gitlab.{{ internal_domain }}"
+    GITLAB_ROOT_PASSWORD: "{{ gitlab_root_password }}"
+  no_log: true
+
+# Template gitlab.rb before first reconfigure
+- name: Template GitLab configuration file
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: "{{ gitlab_config_dir }}/gitlab.rb"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Run gitlab-ctl reconfigure
+  ansible.builtin.command: gitlab-ctl reconfigure
+  environment:
+    GITLAB_DB_PASSWORD: "{{ gitlab_db_password }}"
+    GITLAB_OIDC_SECRET: "{{ gitlab_oidc_secret | default('') }}"
+  no_log: true
+  register: gitlab_reconfigure_result

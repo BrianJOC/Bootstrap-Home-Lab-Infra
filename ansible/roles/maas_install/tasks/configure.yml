@@ -1,0 +1,100 @@
+---
+# Check if MAAS is already initialized
+- name: Check MAAS initialization status
+  ansible.builtin.command: maas status
+  register: maas_status_check
+  changed_when: false
+  failed_when: false
+
+- name: Set maas_initialized fact
+  ansible.builtin.set_fact:
+    maas_initialized: "{{ 'running' in maas_status_check.stdout | lower }}"
+
+# Initialize MAAS region+rack controller
+- name: Initialize MAAS region+rack
+  ansible.builtin.command: >
+    maas init region+rack
+    --database-uri "{{ maas_db_uri }}"
+    --maas-url "http://{{ bootstrap_server_ip }}:{{ maas_port }}/MAAS"
+  environment:
+    MAAS_DB_URI: "{{ maas_db_uri }}"
+  when: not maas_initialized
+  no_log: true
+
+# Create MAAS admin user
+- name: Check if MAAS admin user exists
+  ansible.builtin.command: "maas apikey --username={{ maas_admin_user }}"
+  register: maas_admin_check
+  changed_when: false
+  failed_when: false
+
+- name: Create MAAS admin user
+  ansible.builtin.command: >
+    maas createadmin
+    --username={{ maas_admin_user }}
+    --password={{ maas_admin_password }}
+    --email={{ admin_email }}
+  when: maas_admin_check.rc != 0
+  no_log: true
+
+# Wait for MAAS API to be ready
+- name: Wait for MAAS API to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/"
+    method: GET
+    status_code: [200]
+    validate_certs: false
+  register: maas_api_check
+  retries: 60
+  delay: 5
+  until: maas_api_check.status == 200
+
+# Get MAAS API key for subsequent API calls
+- name: Get MAAS API key for admin user
+  ansible.builtin.command: "maas apikey --username={{ maas_admin_user }}"
+  register: maas_api_key_result
+  changed_when: false
+  no_log: true
+
+- name: Set maas_api_key fact
+  ansible.builtin.set_fact:
+    maas_api_key: "{{ maas_api_key_result.stdout | trim }}"
+  no_log: true
+
+# Login to MAAS API
+- name: Log into MAAS CLI
+  ansible.builtin.command: >
+    maas login {{ maas_admin_user }}
+    http://localhost:{{ maas_port }}/MAAS/api/2.0/
+    {{ maas_api_key }}
+  no_log: true
+  changed_when: false
+
+# Configure upstream DNS to use Technitium
+- name: Configure MAAS upstream DNS to use Technitium
+  ansible.builtin.command: >
+    maas {{ maas_admin_user }} maas set-config
+    name=upstream_dns value={{ bootstrap_server_ip }}
+  register: maas_dns_config
+  changed_when: "'upstream_dns' in maas_dns_config.stdout"
+
+# Configure MAAS domain
+- name: Configure MAAS domain
+  ansible.builtin.command: >
+    maas {{ maas_admin_user }} maas set-config
+    name=maas_name value=maas.{{ internal_domain }}
+  register: maas_domain_config
+  changed_when: true
+
+# Import Ubuntu OS images in background (async, do not wait)
+- name: Import Ubuntu OS images (background operation)
+  ansible.builtin.command: >
+    maas {{ maas_admin_user }} boot-resources import
+  async: 0
+  poll: 0
+  changed_when: true
+  register: image_import_job
+
+- name: Log image import started
+  ansible.builtin.debug:
+    msg: "MAAS: importing OS images in background — may take several minutes. Job ID: {{ image_import_job.ansible_job_id | default('started') }}"

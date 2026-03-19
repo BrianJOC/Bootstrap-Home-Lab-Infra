@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: maas_install
+  author: bootstrap-home-infra
+  description: Install MAAS via snap, initialize region+rack, configure lab VLAN DHCP
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+dependencies: []

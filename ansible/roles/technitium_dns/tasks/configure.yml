@@ -1,0 +1,97 @@
+---
+# Wait for Technitium API to be available
+- name: Wait for Technitium HTTP API to be ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ technitium_port_http }}/api/user/login"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      user: admin
+      pass: "{{ technitium_admin_password }}"
+      includeInfo: "true"
+    status_code: [200]
+    validate_certs: false
+  register: technitium_login
+  retries: 30
+  delay: 5
+  until: technitium_login.status == 200
+  no_log: true
+
+- name: Set Technitium API token fact
+  ansible.builtin.set_fact:
+    technitium_api_token: "{{ technitium_login.json.token }}"
+  no_log: true
+
+# Check if zone already exists
+- name: Check if DNS zone already exists
+  ansible.builtin.uri:
+    url: "http://localhost:{{ technitium_port_http }}/api/zones/list?token={{ technitium_api_token }}"
+    method: GET
+    status_code: [200]
+  register: zone_list
+  no_log: true
+
+- name: Set zone_exists fact
+  ansible.builtin.set_fact:
+    technitium_zone_exists: >-
+      {{ zone_list.json.zones | selectattr('name', 'equalto', internal_domain) | list | length > 0 }}
+
+- name: Create primary DNS zone
+  ansible.builtin.uri:
+    url: "http://localhost:{{ technitium_port_http }}/api/zones/create"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_api_token }}"
+      zone: "{{ internal_domain }}"
+      type: Primary
+    status_code: [200]
+  when: not technitium_zone_exists
+  no_log: true
+
+# Check existing DNS records and create missing ones
+- name: Check existing DNS records
+  ansible.builtin.uri:
+    url: "http://localhost:{{ technitium_port_http }}/api/zones/records/get?token={{ technitium_api_token }}&zone={{ internal_domain }}&domain={{ item.name }}.{{ internal_domain }}&type=A"
+    method: GET
+    status_code: [200]
+  register: dns_record_checks
+  loop: "{{ technitium_dns_records }}"
+  no_log: true
+
+- name: Create A records for bootstrap services
+  ansible.builtin.uri:
+    url: "http://localhost:{{ technitium_port_http }}/api/zones/records/add"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_api_token }}"
+      zone: "{{ internal_domain }}"
+      domain: "{{ item.item.name }}.{{ internal_domain }}"
+      type: A
+      ipAddress: "{{ bootstrap_server_ip }}"
+      ttl: "3600"
+    status_code: [200]
+  loop: "{{ dns_record_checks.results }}"
+  when: >
+    item.json.records is not defined or
+    item.json.records | length == 0
+  no_log: true
+  loop_control:
+    label: "{{ item.item.name }}.{{ internal_domain }}"
+
+# Configure target resolver to use Technitium
+- name: Ensure systemd-resolved drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    mode: "0755"
+  when: ansible_service_mgr == "systemd"
+
+- name: Configure systemd-resolved drop-in for Technitium
+  ansible.builtin.template:
+    src: resolved.conf.j2
+    dest: /etc/systemd/resolved.conf.d/99-technitium.conf
+    mode: "0644"
+  when: ansible_service_mgr == "systemd"
+  notify: reload resolver

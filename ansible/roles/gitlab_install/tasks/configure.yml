@@ -1,0 +1,139 @@
+---
+# Wait for GitLab health endpoint to respond
+- name: Wait for GitLab to become healthy
+  ansible.builtin.uri:
+    url: "https://localhost/-/health"
+    method: GET
+    validate_certs: false
+    status_code: [200]
+  register: gitlab_health
+  retries: "{{ (gitlab_health_timeout / gitlab_health_interval) | int }}"
+  delay: "{{ gitlab_health_interval }}"
+  until: gitlab_health.status == 200
+
+# Create infrastructure and services groups via API
+- name: Get GitLab admin API token
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/users/1/personal_access_tokens"
+    method: POST
+    body_format: json
+    body:
+      name: bootstrap-ansible-token
+      scopes:
+        - api
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_root_password }}"
+    validate_certs: false
+    status_code: [201, 200]
+  register: gitlab_admin_token
+  no_log: true
+
+- name: Set gitlab_api_token fact
+  ansible.builtin.set_fact:
+    gitlab_api_token: "{{ gitlab_admin_token.json.token }}"
+  no_log: true
+
+- name: Check if infrastructure group exists
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/groups?search=infrastructure"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: infra_group_check
+  no_log: true
+
+- name: Create infrastructure group
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/groups"
+    method: POST
+    body_format: json
+    body:
+      name: infrastructure
+      path: infrastructure
+      visibility: private
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [201]
+  when: >
+    infra_group_check.json | selectattr('path', 'equalto', 'infrastructure') | list | length == 0
+  register: infra_group_create
+  no_log: true
+
+- name: Check if services group exists
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/groups?search=services"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: services_group_check
+  no_log: true
+
+- name: Create services group
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/groups"
+    method: POST
+    body_format: json
+    body:
+      name: services
+      path: services
+      visibility: private
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [201]
+  when: >
+    services_group_check.json | selectattr('path', 'equalto', 'services') | list | length == 0
+  no_log: true
+
+# Create infrastructure/iac project
+- name: Check if infrastructure/iac project exists
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/projects?search=iac"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: iac_project_check
+  no_log: true
+
+- name: Get infrastructure group ID
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/groups?search=infrastructure"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: infra_group_info
+  no_log: true
+
+- name: Create infrastructure/iac project
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/projects"
+    method: POST
+    body_format: json
+    body:
+      name: iac
+      path: iac
+      namespace_id: "{{ (infra_group_info.json | selectattr('path', 'equalto', 'infrastructure') | list | first).id }}"
+      visibility: private
+      initialize_with_readme: true
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [201]
+  when: >
+    iac_project_check.json |
+    selectattr('path_with_namespace', 'equalto', 'infrastructure/iac') | list | length == 0
+  no_log: true
+  register: iac_project_create
+
+# Register GitLab Runner
+- name: Include runner registration tasks
+  ansible.builtin.include_tasks: runner.yml

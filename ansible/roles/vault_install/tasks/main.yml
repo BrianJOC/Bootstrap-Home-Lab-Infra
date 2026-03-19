@@ -1,0 +1,31 @@
+---
+# Idempotency gate: check if vault binary exists with correct version
+- name: Check if vault binary already exists
+  ansible.builtin.stat:
+    path: /usr/local/bin/vault
+  register: vault_binary_stat
+
+- name: Check vault binary version if present
+  ansible.builtin.command: vault version
+  register: vault_version_check
+  changed_when: false
+  failed_when: false
+  when: vault_binary_stat.stat.exists
+  environment:
+    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+
+- name: Set vault_needs_install fact
+  ansible.builtin.set_fact:
+    vault_needs_install: >-
+      {{ not vault_binary_stat.stat.exists or
+         (vault_version_check.stdout is defined and vault_version not in vault_version_check.stdout) }}
+
+- name: Install Vault binary
+  ansible.builtin.include_tasks: install.yml
+  when: vault_needs_install
+
+- name: Configure Vault
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Verify Vault
+  ansible.builtin.include_tasks: verify.yml

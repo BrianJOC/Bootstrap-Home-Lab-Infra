@@ -1,0 +1,25 @@
+---
+- name: Assert GitLab runsvdir is active
+  ansible.builtin.command: gitlab-ctl status
+  register: gitlab_verify_status
+  changed_when: false
+  failed_when: gitlab_verify_status.rc != 0
+
+- name: Assert GitLab health endpoint returns 200
+  ansible.builtin.uri:
+    url: "https://localhost/-/health"
+    method: GET
+    validate_certs: false
+    status_code: [200]
+  register: gitlab_health_verify
+  failed_when: gitlab_health_verify.status != 200
+
+- name: Assert gitlab-runner service is active
+  ansible.builtin.systemd:
+    name: gitlab-runner
+  register: runner_verify_status
+  failed_when: runner_verify_status.status.ActiveState != "active"
+
+- name: Log GitLab verification result
+  ansible.builtin.debug:
+    msg: "GitLab CE running and healthy. Runner service is active."

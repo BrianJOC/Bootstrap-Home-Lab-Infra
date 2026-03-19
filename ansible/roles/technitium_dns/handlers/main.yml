@@ -1,0 +1,14 @@
+---
+- name: restart technitium
+  community.docker.docker_compose_v2:
+    project_src: /opt/technitium
+    state: present
+    recreate: always
+  listen: restart technitium
+
+- name: reload resolver
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: restarted
+  listen: reload resolver
+  when: ansible_service_mgr == "systemd"

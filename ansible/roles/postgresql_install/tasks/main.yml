@@ -1,0 +1,21 @@
+---
+# Idempotency gate: check if PostgreSQL is already running
+- name: Check if PostgreSQL service is running
+  ansible.builtin.systemd:
+    name: "postgresql@{{ postgresql_version }}-main"
+  register: pg_service_status
+  failed_when: false
+
+- name: Set pg_already_running fact
+  ansible.builtin.set_fact:
+    pg_already_running: "{{ pg_service_status.status.ActiveState | default('inactive') == 'active' }}"
+
+- name: Install PostgreSQL
+  ansible.builtin.include_tasks: install.yml
+  when: not pg_already_running
+
+- name: Configure PostgreSQL
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Verify PostgreSQL
+  ansible.builtin.include_tasks: verify.yml

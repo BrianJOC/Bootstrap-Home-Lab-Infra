@@ -1,0 +1,22 @@
+---
+- name: Stage 0 — Connectivity Check
+  hosts: bootstrap_target
+  become: false
+  gather_facts: true
+  tasks:
+    - name: Assert target is reachable
+      ansible.builtin.ping:
+
+    - name: Assert target OS is Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_distribution == "Ubuntu"
+          - ansible_distribution_major_version | int >= 22
+        fail_msg: >
+          Target must be Ubuntu 22.04 or later.
+          Detected: {{ ansible_distribution }} {{ ansible_distribution_version }}
+        success_msg: "Target OS OK: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Report detected architecture
+      ansible.builtin.debug:
+        msg: "Target architecture: {{ ansible_architecture }}"

@@ -1,0 +1,18 @@
+---
+- name: Install snapd if not present
+  ansible.builtin.apt:
+    name: snapd
+    state: present
+    update_cache: true
+
+- name: Ensure snapd service is running
+  ansible.builtin.systemd:
+    name: snapd
+    state: started
+    enabled: true
+
+- name: Install MAAS snap
+  community.general.snap:
+    name: maas
+    channel: "{{ maas_channel }}"
+    state: present

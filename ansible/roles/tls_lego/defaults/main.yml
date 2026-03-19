@@ -1,0 +1,6 @@
+---
+lego_version: "4.16.1"
+lego_install_dir: /usr/local/bin
+cert_dir: /opt/certs
+acme_server_url: "https://acme-v02.api.letsencrypt.org/directory"
+cloudflare_api_base_url: "https://api.cloudflare.com"

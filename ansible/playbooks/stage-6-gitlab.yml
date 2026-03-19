@@ -1,0 +1,6 @@
+---
+- name: Stage 6 — GitLab + Runner
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - gitlab_install

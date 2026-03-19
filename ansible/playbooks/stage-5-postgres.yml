@@ -1,0 +1,6 @@
+---
+- name: Stage 5 — PostgreSQL
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - postgresql_install

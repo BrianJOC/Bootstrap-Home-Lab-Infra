@@ -1,0 +1,28 @@
+---
+- name: Assert MAAS snap is installed
+  ansible.builtin.command: snap list maas
+  register: maas_snap_verify
+  changed_when: false
+  failed_when: maas_snap_verify.rc != 0
+
+- name: Assert MAAS API responds
+  ansible.builtin.uri:
+    url: "http://localhost:{{ maas_port }}/MAAS/"
+    method: GET
+    status_code: [200, 301, 302]
+    validate_certs: false
+  register: maas_api_verify
+  failed_when: maas_api_verify.status not in [200, 301, 302]
+
+- name: Assert MAAS API v2.0 responds
+  ansible.builtin.uri:
+    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/"
+    method: GET
+    status_code: [200]
+    validate_certs: false
+  register: maas_api2_verify
+  failed_when: maas_api2_verify.status != 200
+
+- name: Log MAAS verification result
+  ansible.builtin.debug:
+    msg: "MAAS snap installed and API is responsive at http://localhost:{{ maas_port }}/MAAS/"

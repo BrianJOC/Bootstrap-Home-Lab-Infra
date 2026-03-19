@@ -1,0 +1,8 @@
+---
+- name: restart authentik
+  community.docker.docker_compose_v2:
+    project_src: "{{ authentik_data_dir }}"
+    state: present
+    recreate: always
+  listen: restart authentik
+  no_log: true

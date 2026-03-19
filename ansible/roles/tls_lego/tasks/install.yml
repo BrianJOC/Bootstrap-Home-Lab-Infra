@@ -1,0 +1,39 @@
+---
+# Map ansible_architecture to lego download arch
+- name: Set lego_arch fact
+  ansible.builtin.set_fact:
+    lego_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+
+- name: Set lego download URL
+  ansible.builtin.set_fact:
+    lego_download_url: "https://github.com/go-acme/lego/releases/download/v{{ lego_version }}/lego_v{{ lego_version }}_linux_{{ lego_arch }}.tar.gz"
+
+- name: Create temp directory for lego download
+  ansible.builtin.tempfile:
+    state: directory
+    suffix: lego
+  register: lego_tmp_dir
+
+- name: Download lego tarball
+  ansible.builtin.get_url:
+    url: "{{ lego_download_url }}"
+    dest: "{{ lego_tmp_dir.path }}/lego.tar.gz"
+    mode: "0644"
+
+- name: Extract lego binary from tarball
+  ansible.builtin.unarchive:
+    src: "{{ lego_tmp_dir.path }}/lego.tar.gz"
+    dest: "{{ lego_tmp_dir.path }}"
+    remote_src: true
+
+- name: Install lego binary to install dir
+  ansible.builtin.copy:
+    src: "{{ lego_tmp_dir.path }}/lego"
+    dest: "{{ lego_install_dir }}/lego"
+    mode: "0755"
+    remote_src: true
+
+- name: Clean up temp directory
+  ansible.builtin.file:
+    path: "{{ lego_tmp_dir.path }}"
+    state: absent

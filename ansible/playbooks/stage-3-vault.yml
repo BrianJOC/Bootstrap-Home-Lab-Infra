@@ -1,0 +1,6 @@
+---
+- name: Stage 3 — Vault
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - vault_install

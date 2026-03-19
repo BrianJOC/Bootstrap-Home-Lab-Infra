@@ -1,0 +1,21 @@
+---
+# Idempotency gate: check if MAAS snap is already installed
+- name: Check if MAAS snap is installed
+  ansible.builtin.command: snap list maas
+  register: maas_snap_check
+  changed_when: false
+  failed_when: false
+
+- name: Set maas_already_installed fact
+  ansible.builtin.set_fact:
+    maas_already_installed: "{{ maas_snap_check.rc == 0 }}"
+
+- name: Install MAAS
+  ansible.builtin.include_tasks: install.yml
+  when: not maas_already_installed
+
+- name: Configure MAAS
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Verify MAAS
+  ansible.builtin.include_tasks: verify.yml

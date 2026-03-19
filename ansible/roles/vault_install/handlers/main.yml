@@ -1,0 +1,12 @@
+---
+- name: restart vault
+  ansible.builtin.systemd:
+    name: vault
+    state: restarted
+  listen: restart vault
+
+- name: reload vault
+  ansible.builtin.systemd:
+    name: vault
+    state: reloaded
+  listen: reload vault

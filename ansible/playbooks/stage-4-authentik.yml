@@ -1,0 +1,6 @@
+---
+- name: Stage 4 — Authentik
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - authentik_install

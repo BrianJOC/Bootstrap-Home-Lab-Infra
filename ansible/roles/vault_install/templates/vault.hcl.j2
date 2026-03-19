@@ -1,0 +1,14 @@
+storage "raft" {
+  path    = "{{ vault_data_dir }}"
+  node_id = "bootstrap"
+}
+
+listener "tcp" {
+  address       = "0.0.0.0:{{ vault_port }}"
+  tls_cert_file = "{{ vault_config_dir }}/tls/fullchain.pem"
+  tls_key_file  = "{{ vault_config_dir }}/tls/privkey.pem"
+}
+
+api_addr     = "https://{{ bootstrap_server_ip }}:{{ vault_port }}"
+cluster_addr = "https://{{ bootstrap_server_ip }}:8201"
+ui           = true

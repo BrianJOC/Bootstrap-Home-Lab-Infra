@@ -1,0 +1,29 @@
+---
+# Idempotency gate: check if lego binary exists with correct version
+- name: Check if lego binary already exists
+  ansible.builtin.stat:
+    path: "{{ lego_install_dir }}/lego"
+  register: lego_binary_stat
+
+- name: Check lego binary version if present
+  ansible.builtin.command: "{{ lego_install_dir }}/lego --version"
+  register: lego_version_check
+  changed_when: false
+  failed_when: false
+  when: lego_binary_stat.stat.exists
+
+- name: Set lego_needs_install fact
+  ansible.builtin.set_fact:
+    lego_needs_install: >-
+      {{ not lego_binary_stat.stat.exists or
+         (lego_version_check.stdout is defined and lego_version not in lego_version_check.stdout) }}
+
+- name: Install lego binary
+  ansible.builtin.include_tasks: install.yml
+  when: lego_needs_install
+
+- name: Issue TLS certificate
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Verify TLS certificate
+  ansible.builtin.include_tasks: verify.yml

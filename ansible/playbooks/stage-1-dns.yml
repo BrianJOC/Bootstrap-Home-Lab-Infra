@@ -1,0 +1,6 @@
+---
+- name: Stage 1 — DNS (Technitium)
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - technitium_dns

@@ -1,0 +1,52 @@
+---
+# Set postgres admin password
+- name: Set PostgreSQL admin password
+  community.postgresql.postgresql_user:
+    name: postgres
+    password: "{{ pg_admin_password }}"
+    state: present
+  become_user: postgres
+  no_log: true
+
+# Create service databases and users
+- name: Create service databases
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    state: present
+  loop: "{{ postgresql_databases }}"
+  become_user: postgres
+
+- name: Create service users
+  community.postgresql.postgresql_user:
+    name: "{{ item.user }}"
+    password: "{{ lookup('vars', item.user + '_db_password') }}"
+    state: present
+    db: "{{ item.name }}"
+    priv: ALL
+  loop: "{{ postgresql_databases }}"
+  become_user: postgres
+  no_log: true
+
+# Configure pg_hba.conf to allow connections from bootstrap server
+- name: Configure pg_hba.conf for service users
+  community.postgresql.postgresql_pg_hba:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    contype: host
+    users: "{{ item.user }}"
+    source: "{{ bootstrap_server_ip }}/32"
+    databases: "{{ item.name }}"
+    method: md5
+    state: present
+  loop: "{{ postgresql_databases }}"
+  notify: reload postgresql
+
+# Configure postgresql.conf listen_addresses
+- name: Configure PostgreSQL to listen on all interfaces
+  community.postgresql.postgresql_set:
+    name: listen_addresses
+    value: "*"
+  become_user: postgres
+  notify: restart postgresql
+
+- name: Flush handlers to apply pg config changes
+  ansible.builtin.meta: flush_handlers

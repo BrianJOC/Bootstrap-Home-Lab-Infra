@@ -1,0 +1,93 @@
+---
+# Install and register GitLab Runner
+- name: Check if gitlab-runner is installed
+  ansible.builtin.command: gitlab-runner --version
+  register: runner_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Download GitLab Runner install script
+  ansible.builtin.get_url:
+    url: "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh"
+    dest: /tmp/gitlab-runner-setup.sh
+    mode: "0755"
+  when: runner_version_check.rc != 0
+
+- name: Run GitLab Runner repo setup
+  ansible.builtin.command: bash /tmp/gitlab-runner-setup.sh
+  args:
+    creates: /etc/apt/sources.list.d/runner_gitlab-runner.list
+  when: runner_version_check.rc != 0
+
+- name: Install GitLab Runner package
+  ansible.builtin.apt:
+    name: gitlab-runner
+    state: present
+    update_cache: true
+  when: runner_version_check.rc != 0
+
+- name: Ensure gitlab-runner service is started and enabled
+  ansible.builtin.systemd:
+    name: gitlab-runner
+    state: started
+    enabled: true
+
+# Check if runner is already registered
+- name: Check existing runner registrations
+  ansible.builtin.command: gitlab-runner list
+  register: runner_list_check
+  changed_when: false
+  failed_when: false
+
+- name: Get GitLab Runner registration token
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/runners/all"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [200]
+  register: existing_runners
+  no_log: true
+  when: gitlab_api_token is defined
+
+- name: Create GitLab Runner registration token
+  ansible.builtin.uri:
+    url: "https://localhost/api/v4/user/runners"
+    method: POST
+    body_format: json
+    body:
+      runner_type: instance_type
+      description: bootstrap-runner
+      tag_list:
+        - bootstrap
+        - terraform
+        - ansible
+      locked: false
+      paused: false
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
+    validate_certs: false
+    status_code: [201]
+  register: runner_token_response
+  when:
+    - gitlab_api_token is defined
+    - "existing_runners.json | selectattr('description', 'equalto', 'bootstrap-runner') | list | length == 0"
+  no_log: true
+
+- name: Register GitLab Runner
+  ansible.builtin.command: >
+    gitlab-runner register
+    --non-interactive
+    --url "https://gitlab.{{ internal_domain }}"
+    --token "{{ runner_token_response.json.token }}"
+    --executor shell
+    --description bootstrap-runner
+    --tag-list "bootstrap,terraform,ansible"
+    --run-untagged false
+  when:
+    - runner_token_response is defined
+    - runner_token_response.json is defined
+    - "'bootstrap-runner' not in runner_list_check.stdout"
+  no_log: true
+  notify: restart gitlab-runner

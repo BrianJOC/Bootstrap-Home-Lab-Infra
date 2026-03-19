@@ -1,0 +1,6 @@
+---
+- name: Stage 7 — MAAS
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - maas_install

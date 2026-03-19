@@ -1,0 +1,6 @@
+---
+- name: Stage 2 — TLS (Cloudflare DNS-01)
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - tls_lego

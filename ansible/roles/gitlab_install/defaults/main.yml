@@ -1,0 +1,7 @@
+---
+gitlab_version: "gitlab-ce"
+gitlab_port_http: 80
+gitlab_port_https: 443
+gitlab_config_dir: /etc/gitlab
+gitlab_health_timeout: 600
+gitlab_health_interval: 15

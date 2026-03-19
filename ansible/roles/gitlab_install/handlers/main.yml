@@ -1,0 +1,14 @@
+---
+- name: gitlab-ctl-reconfigure
+  ansible.builtin.command: gitlab-ctl reconfigure
+  listen: gitlab-ctl-reconfigure
+  environment:
+    GITLAB_DB_PASSWORD: "{{ gitlab_db_password }}"
+    GITLAB_OIDC_SECRET: "{{ gitlab_oidc_secret | default('') }}"
+  no_log: true
+
+- name: restart gitlab-runner
+  ansible.builtin.systemd:
+    name: gitlab-runner
+    state: restarted
+  listen: restart gitlab-runner

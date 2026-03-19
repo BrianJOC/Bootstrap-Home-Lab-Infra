@@ -1,0 +1,28 @@
+---
+# Top-level playbook — imports all stage playbooks in order.
+# Run individual stages with: ansible-playbook playbooks/stage-N-<name>.yml
+# Run all stages with: ansible-playbook playbooks/site.yml
+
+- name: Stage 0 — Connectivity Check
+  import_playbook: stage-0-config.yml
+
+- name: Stage 1 — DNS
+  import_playbook: stage-1-dns.yml
+
+- name: Stage 2 — TLS
+  import_playbook: stage-2-tls.yml
+
+- name: Stage 3 — Vault
+  import_playbook: stage-3-vault.yml
+
+- name: Stage 4 — Authentik
+  import_playbook: stage-4-authentik.yml
+
+- name: Stage 5 — PostgreSQL
+  import_playbook: stage-5-postgres.yml
+
+- name: Stage 6 — GitLab + Runner
+  import_playbook: stage-6-gitlab.yml
+
+- name: Stage 7 — MAAS
+  import_playbook: stage-7-maas.yml

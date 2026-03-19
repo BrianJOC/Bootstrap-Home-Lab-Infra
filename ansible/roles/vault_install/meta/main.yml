@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: vault_install
+  author: bootstrap-home-infra
+  description: Install HashiCorp Vault binary, configure Raft storage and TLS, manage systemd unit
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+dependencies: []

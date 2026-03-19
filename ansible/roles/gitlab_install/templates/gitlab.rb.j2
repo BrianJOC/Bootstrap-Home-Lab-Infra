@@ -1,0 +1,57 @@
+# Managed by Ansible — gitlab_install role
+# Secrets are passed as environment variables — never stored in this file
+
+external_url 'https://gitlab.{{ internal_domain }}'
+
+# Disable bundled PostgreSQL — use shared instance
+postgresql['enable'] = false
+gitlab_rails['db_adapter'] = 'postgresql'
+gitlab_rails['db_host'] = '{{ bootstrap_server_ip }}'
+gitlab_rails['db_port'] = 5432
+gitlab_rails['db_database'] = 'gitlab'
+gitlab_rails['db_username'] = 'gitlab'
+gitlab_rails['db_password'] = ENV['GITLAB_DB_PASSWORD']
+
+# TLS configuration
+nginx['ssl_certificate'] = "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.crt"
+nginx['ssl_certificate_key'] = "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.key"
+
+# Authentik OIDC SSO
+gitlab_rails['omniauth_enabled'] = true
+gitlab_rails['omniauth_allow_single_sign_on'] = ['openid_connect']
+gitlab_rails['omniauth_sync_email_from_provider'] = 'openid_connect'
+gitlab_rails['omniauth_sync_profile_from_provider'] = ['openid_connect']
+gitlab_rails['omniauth_auto_sign_in_with_provider'] = nil
+gitlab_rails['omniauth_block_auto_created_users'] = false
+gitlab_rails['omniauth_providers'] = [
+  {
+    name: 'openid_connect',
+    label: 'Authentik',
+    args: {
+      name: 'openid_connect',
+      scope: ['openid', 'profile', 'email'],
+      response_type: 'code',
+      issuer: 'https://authentik.{{ internal_domain }}/application/o/gitlab/',
+      discovery: true,
+      client_auth_method: 'query',
+      uid_field: 'sub',
+      send_scope_to_token_endpoint: 'false',
+      pkce: true,
+      client_options: {
+        identifier: '{{ gitlab_oidc_client_id | default("gitlab") }}',
+        secret: ENV['GITLAB_OIDC_SECRET'],
+        redirect_uri: 'https://gitlab.{{ internal_domain }}/users/auth/openid_connect/callback'
+      }
+    }
+  }
+]
+
+# Disable bundled Redis if needed (using bundled Redis for now)
+# redis['enable'] = false
+
+# GitLab Shell
+gitlab_shell['auth_file'] = '/home/git/.ssh/authorized_keys'
+
+# Logging
+logging['logrotate_frequency'] = 'weekly'
+logging['logrotate_rotate'] = 52

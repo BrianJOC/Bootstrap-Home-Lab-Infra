@@ -1,0 +1,4 @@
+---
+maas_channel: "3.4/stable"
+maas_port: 5240
+maas_admin_user: maas-admin

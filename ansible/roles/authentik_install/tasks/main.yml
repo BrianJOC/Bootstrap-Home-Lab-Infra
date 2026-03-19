@@ -1,0 +1,23 @@
+---
+# Idempotency gate: check if Authentik containers are already running
+- name: Check if Authentik server container is running
+  community.docker.docker_container_info:
+    name: authentik-server
+  register: authentik_container_info
+  failed_when: false
+
+- name: Set authentik_already_running fact
+  ansible.builtin.set_fact:
+    authentik_already_running: >-
+      {{ authentik_container_info.container is defined and
+         authentik_container_info.container.State.Running | default(false) }}
+
+- name: Install and deploy Authentik
+  ansible.builtin.include_tasks: install.yml
+  when: not authentik_already_running
+
+- name: Configure Authentik
+  ansible.builtin.include_tasks: configure.yml
+
+- name: Verify Authentik
+  ansible.builtin.include_tasks: verify.yml

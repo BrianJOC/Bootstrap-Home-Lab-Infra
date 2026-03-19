@@ -1,0 +1,76 @@
+---
+# Start vault service
+- name: Start Vault service
+  ansible.builtin.systemd:
+    name: vault
+    state: started
+    enabled: true
+
+# Wait for vault to be ready (sealed state is OK at this point)
+- name: Wait for Vault API to respond
+  ansible.builtin.uri:
+    url: "https://localhost:{{ vault_port }}/v1/sys/health"
+    method: GET
+    validate_certs: false
+    status_code: [200, 429, 472, 473, 501, 503]
+  register: vault_health
+  retries: 24
+  delay: 5
+  until: vault_health.status in [200, 429, 472, 473, 501, 503]
+
+# Check if vault is already initialized
+- name: Check Vault initialization status
+  ansible.builtin.uri:
+    url: "https://localhost:{{ vault_port }}/v1/sys/init"
+    method: GET
+    validate_certs: false
+    status_code: [200]
+  register: vault_init_status
+
+- name: Set vault_initialized fact
+  ansible.builtin.set_fact:
+    vault_initialized: "{{ vault_init_status.json.initialized }}"
+
+# Initialize Vault if not already initialized
+- name: Initialize Vault with Shamir shares
+  ansible.builtin.uri:
+    url: "https://localhost:{{ vault_port }}/v1/sys/init"
+    method: POST
+    body_format: json
+    body:
+      secret_shares: "{{ vault_shares }}"
+      secret_threshold: "{{ vault_threshold }}"
+    validate_certs: false
+    status_code: [200]
+  register: vault_init_result
+  when: not vault_initialized
+  no_log: true
+
+- name: Write vault-init.json to remote temp location
+  ansible.builtin.copy:
+    content: "{{ vault_init_result.json | to_json }}"
+    dest: /tmp/vault-init.json
+    mode: "0600"
+  when: not vault_initialized
+  no_log: true
+
+- name: Fetch vault-init.json to controller
+  ansible.builtin.fetch:
+    src: /tmp/vault-init.json
+    dest: "{{ playbook_dir }}/../../vault-init.json"
+    flat: true
+  when: not vault_initialized
+  no_log: true
+
+- name: Remove vault-init.json from remote
+  ansible.builtin.file:
+    path: /tmp/vault-init.json
+    state: absent
+  when: not vault_initialized
+
+- name: Write vault initialized marker
+  ansible.builtin.file:
+    path: /opt/vault/.initialized
+    state: touch
+    mode: "0400"
+  when: not vault_initialized

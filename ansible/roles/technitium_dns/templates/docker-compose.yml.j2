@@ -1,0 +1,14 @@
+---
+services:
+  technitium:
+    image: technitium/dns-server:latest
+    container_name: technitium
+    restart: unless-stopped
+    ports:
+      - "{{ technitium_port_dns }}:53/udp"
+      - "{{ technitium_port_dns }}:53/tcp"
+      - "{{ technitium_port_http }}:5380"
+    volumes:
+      - "{{ technitium_data_dir }}:/etc/dns"
+    environment:
+      - DNS_SERVER_DOMAIN={{ internal_domain }}
