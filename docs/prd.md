@@ -5,6 +5,21 @@
 
 ---
 
+## Core Principle: Bootstrap Exists to Eat Itself
+
+The bootstrap tool's only job is to reach the point where GitOps can take over.
+Once GitLab is operational, **everything** — Vault policies, DNS records, Authentik
+OIDC clients, MAAS machine definitions, k3s workloads — is expressed as Terraform
+code and managed through GitLab CI/CD. No service configuration lives outside of
+IaC in the final state. The bootstrap is a temporary escape hatch through the
+chicken-and-egg problem, not a permanent operator.
+
+The handoff is explicit: bootstrap completes → local Terraform state migrates to
+GitLab HTTP backend → GitOps takes over → bootstrap tool is no longer needed for
+day-to-day operation.
+
+---
+
 ## End State Vision
 
 A single Ubuntu server bootstrapped via a TUI-guided install script (Go +
@@ -45,6 +60,9 @@ at any machine, and idempotent.
 12. The tool can target a remote machine by IP or hostname, not just localhost
 13. Bootstrap outputs `vault-init.json` containing Vault unseal keys and root
     token, with a clear warning to store securely
+14. After bootstrap completes, all service configuration is expressed as
+    Terraform code in GitLab; local Terraform state is migrated to the GitLab
+    HTTP backend; no service configuration exists outside of IaC
 
 ---
 
