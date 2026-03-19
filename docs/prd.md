@@ -156,13 +156,17 @@ health_check: http
 
 ## Infrastructure Definition Schema
 
-Clusters and bare metal are defined separately as first-class IaC objects:
+Clusters are named, first-class IaC objects. **How a cluster's nodes are
+provisioned is decoupled from the cluster definition** — nodes can come from
+bare metal (via MAAS), Proxmox VMs, Proxmox LXC containers, or any other
+provisioning path. The cluster definition references nodes by name; the
+provisioning of those nodes is defined separately.
 
 ```yaml
 # infrastructure/clusters/gpu-cluster.yaml
 name: gpu-cluster
 nodes:
-  - maas_machine: gpu-box
+  - name: gpu-box          # how this node was provisioned is defined elsewhere
     roles: [control-plane, worker]
 ```
 
@@ -170,15 +174,36 @@ nodes:
 # infrastructure/clusters/general-cluster.yaml
 name: general-cluster
 nodes:
-  - maas_machine: server-01
+  - name: vm-01
     roles: [control-plane, worker]
-  - maas_machine: server-02
+  - name: vm-02
     roles: [worker]
 ```
 
+Node provisioning is defined separately and can be any of:
+
+```yaml
+# infrastructure/nodes/gpu-box.yaml
+name: gpu-box
+provisioner: maas          # bare metal via MAAS
+maas_machine: gpu-box-01
+
+# infrastructure/nodes/vm-01.yaml
+name: vm-01
+provisioner: proxmox-vm    # VM on a Proxmox host
+proxmox_host: pve-01
+vm_template: ubuntu-24.04
+
+# infrastructure/nodes/lxc-01.yaml
+name: lxc-01
+provisioner: proxmox-lxc   # LXC container on a Proxmox host
+proxmox_host: pve-01
+template: ubuntu-24.04
+```
+
 Multiple clusters are supported — you decide how many exist and what they're for.
-Kubernetes handles internal scheduling within each cluster (node selection,
-resource allocation). The service definition picks the cluster; k8s picks the node.
+The service definition picks the cluster; Kubernetes handles internal scheduling.
+The provisioning path for nodes is flexible and not prescribed.
 
 ---
 
@@ -186,9 +211,13 @@ resource allocation). The service definition picks the cluster; k8s picks the no
 
 | Mode | When to use | IaC chain |
 |------|-------------|-----------|
-| k8s cluster (Helm) | Containerized services | MAAS → Ansible (k3s install) → Terraform Helm provider |
-| Bare metal (Ansible) | Proxmox host, GPU server, base OS config | MAAS provisions → Ansible role on named machine |
-| Proxmox VM | *(later phase)* | Terraform Proxmox provider |
+| k8s cluster (Helm) | Containerized services | Nodes provisioned (any method) → Ansible (k3s) → Terraform Helm provider |
+| Bare metal (Ansible) | Proxmox host, direct installs, base OS config | MAAS provisions → Ansible role on named machine |
+| Proxmox VM | VM workloads or k8s nodes | Terraform Proxmox provider → VM defined as node |
+| Proxmox LXC | Lightweight container workloads or k8s nodes | Terraform Proxmox provider → LXC defined as node |
+
+The provisioning method is an implementation detail of the node — not of the
+cluster or the service deployed to it.
 
 ---
 
