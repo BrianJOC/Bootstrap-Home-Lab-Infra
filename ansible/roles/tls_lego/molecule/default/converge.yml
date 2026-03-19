@@ -1,0 +1,13 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    - role: tls_lego
+      vars:
+        internal_domain: home.test
+        bootstrap_server_ip: "127.0.0.1"
+        admin_password: "TestPassword123!"
+        acme_server_url: "https://localhost:14000/dir"
+        cloudflare_api_base_url: "http://localhost:8080"
+        # role-specific test vars

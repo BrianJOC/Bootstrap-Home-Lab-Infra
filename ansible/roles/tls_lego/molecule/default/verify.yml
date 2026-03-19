@@ -1,0 +1,40 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check cert directory exists
+      ansible.builtin.stat:
+        path: /opt/certs/home.test
+      register: cert_dir
+
+    - name: Assert cert directory exists
+      ansible.builtin.assert:
+        that:
+          - cert_dir.stat.exists
+          - cert_dir.stat.isdir
+        fail_msg: "Cert directory /opt/certs/home.test does not exist"
+
+    - name: Check fullchain.pem exists
+      ansible.builtin.stat:
+        path: /opt/certs/home.test/fullchain.pem
+      register: fullchain
+
+    - name: Assert fullchain.pem exists
+      ansible.builtin.assert:
+        that:
+          - fullchain.stat.exists
+          - fullchain.stat.size > 0
+        fail_msg: "/opt/certs/home.test/fullchain.pem does not exist or is empty"
+
+    - name: Check privkey.pem exists
+      ansible.builtin.stat:
+        path: /opt/certs/home.test/privkey.pem
+      register: privkey
+
+    - name: Assert privkey.pem exists
+      ansible.builtin.assert:
+        that:
+          - privkey.stat.exists
+          - privkey.stat.size > 0
+        fail_msg: "/opt/certs/home.test/privkey.pem does not exist or is empty"

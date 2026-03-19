@@ -1,0 +1,33 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check that MAAS snap is installed
+      ansible.builtin.command:
+        cmd: snap list maas
+      register: snap_maas
+      changed_when: false
+
+    - name: Assert MAAS snap is installed
+      ansible.builtin.assert:
+        that:
+          - snap_maas.rc == 0
+        fail_msg: "MAAS snap is not installed (snap list maas returned non-zero)"
+
+    - name: Check MAAS API responds on port 5240
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:5240/MAAS/api/2.0/"
+        method: GET
+        status_code: 200
+      register: maas_api
+      retries: 10
+      delay: 30
+      until: maas_api.status == 200
+
+    - name: Assert MAAS API returned 200
+      ansible.builtin.assert:
+        that:
+          - maas_api.status == 200
+        fail_msg: "MAAS API on port 5240 did not return 200 (status: {{ maas_api.status }})"
+        success_msg: "MAAS API is responding on port 5240"

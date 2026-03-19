@@ -1,0 +1,26 @@
+# Test keys (private key only — never commit)
+test/keys/test_id_ed25519
+
+# Built artifacts
+bin/bootstrap
+test/images/*.qcow2
+
+# Vault init output — store securely, never commit
+vault-init.json
+
+# Runtime config with secrets — never commit
+.env
+
+# Go
+*.exe
+*.test
+vendor/
+
+# Logs
+logs/
+
+# Packer cache
+packer_cache/
+
+# Molecule
+.molecule/

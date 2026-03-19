@@ -1,0 +1,12 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    - role: maas_install
+      vars:
+        internal_domain: home.test
+        bootstrap_server_ip: "127.0.0.1"
+        admin_password: "TestPassword123!"
+        maas_http_port: 5240
+        # role-specific test vars

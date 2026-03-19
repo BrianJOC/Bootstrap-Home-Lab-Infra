@@ -1,0 +1,34 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check that Authentik containers are running
+      ansible.builtin.command:
+        cmd: docker compose ps --format json
+        chdir: /opt/authentik
+      register: compose_ps
+      changed_when: false
+
+    - name: Assert Authentik server container is running
+      ansible.builtin.assert:
+        that:
+          - "'running' in compose_ps.stdout | lower or 'up' in compose_ps.stdout | lower"
+        fail_msg: "Authentik containers do not appear to be running"
+
+    - name: Check Authentik API responds on port 9000
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/v3/root/config/"
+        method: GET
+        status_code: 200
+      register: authentik_api
+      retries: 10
+      delay: 30
+      until: authentik_api.status == 200
+
+    - name: Assert Authentik API responded with 200
+      ansible.builtin.assert:
+        that:
+          - authentik_api.status == 200
+        fail_msg: "Authentik API on port 9000 did not return 200 (status: {{ authentik_api.status }})"
+        success_msg: "Authentik API is responding on port 9000"

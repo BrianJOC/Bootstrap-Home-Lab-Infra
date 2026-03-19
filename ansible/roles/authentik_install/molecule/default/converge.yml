@@ -1,0 +1,12 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  roles:
+    - role: authentik_install
+      vars:
+        internal_domain: home.test
+        bootstrap_server_ip: "127.0.0.1"
+        admin_password: "TestPassword123!"
+        authentik_use_bundled_postgres: true
+        # role-specific test vars

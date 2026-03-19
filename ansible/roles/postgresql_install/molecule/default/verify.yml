@@ -1,0 +1,54 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check postgresql service is active
+      ansible.builtin.systemd:
+        name: postgresql
+      register: pg_service
+
+    - name: Assert postgresql service is running
+      ansible.builtin.assert:
+        that:
+          - pg_service.status.ActiveState == "active"
+        fail_msg: "PostgreSQL service is not active (state: {{ pg_service.status.ActiveState }})"
+
+    - name: Check database authentik exists
+      ansible.builtin.command:
+        cmd: psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='authentik'"
+      become_user: postgres
+      register: db_authentik
+      changed_when: false
+
+    - name: Assert authentik database exists
+      ansible.builtin.assert:
+        that:
+          - db_authentik.stdout == "1"
+        fail_msg: "Database 'authentik' does not exist"
+
+    - name: Check database gitlab exists
+      ansible.builtin.command:
+        cmd: psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='gitlab'"
+      become_user: postgres
+      register: db_gitlab
+      changed_when: false
+
+    - name: Assert gitlab database exists
+      ansible.builtin.assert:
+        that:
+          - db_gitlab.stdout == "1"
+        fail_msg: "Database 'gitlab' does not exist"
+
+    - name: Check database maas exists
+      ansible.builtin.command:
+        cmd: psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='maas'"
+      become_user: postgres
+      register: db_maas
+      changed_when: false
+
+    - name: Assert maas database exists
+      ansible.builtin.assert:
+        that:
+          - db_maas.stdout == "1"
+        fail_msg: "Database 'maas' does not exist"

@@ -1,0 +1,29 @@
+version: "3.8"
+services:
+  cloudflare-mock:
+    build: ./cloudflare
+    ports:
+      - "8080:8080"
+    environment:
+      MOCK_CF_PORT: "8080"
+
+  pebble:
+    image: letsencrypt/pebble:latest
+    ports:
+      - "14000:14000"
+      - "15000:15000"
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_VA_ALWAYS_VALID: "1"
+    command: pebble -config /pebble-config.json -dnsserver challtestsrv:8053
+    volumes:
+      - ./pebble/pebble-config.json:/pebble-config.json
+    depends_on:
+      - challtestsrv
+
+  challtestsrv:
+    image: letsencrypt/pebble-challtestsrv:latest
+    ports:
+      - "8055:8055"
+      - "8053:8053/udp"
+    command: pebble-challtestsrv -defaultIPv4 127.0.0.1

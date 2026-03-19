@@ -1,0 +1,33 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check gitlab-runsvdir service is active
+      ansible.builtin.systemd:
+        name: gitlab-runsvdir
+      register: gitlab_runsvdir
+
+    - name: Assert gitlab-runsvdir is active
+      ansible.builtin.assert:
+        that:
+          - gitlab_runsvdir.status.ActiveState == "active"
+        fail_msg: "gitlab-runsvdir service is not active (state: {{ gitlab_runsvdir.status.ActiveState }})"
+
+    - name: Check GitLab health endpoint returns 200
+      ansible.builtin.uri:
+        url: "https://gitlab.home.test/-/health"
+        method: GET
+        validate_certs: false
+        status_code: 200
+      register: gitlab_health
+      retries: 20
+      delay: 30
+      until: gitlab_health.status == 200
+
+    - name: Assert GitLab health endpoint returned 200
+      ansible.builtin.assert:
+        that:
+          - gitlab_health.status == 200
+        fail_msg: "GitLab /-/health did not return 200 (status: {{ gitlab_health.status }})"
+        success_msg: "GitLab is healthy (/-/health returned 200)"

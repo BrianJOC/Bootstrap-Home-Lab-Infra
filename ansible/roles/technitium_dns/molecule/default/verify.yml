@@ -1,0 +1,38 @@
+---
+- name: Verify
+  hosts: all
+  become: true
+  tasks:
+    - name: Check port 53 is listening (TCP)
+      ansible.builtin.wait_for:
+        port: 53
+        host: "127.0.0.1"
+        timeout: 10
+        msg: "Port 53 (DNS TCP) is not listening"
+
+    - name: Check port 5380 is listening (Technitium API)
+      ansible.builtin.wait_for:
+        port: 5380
+        host: "127.0.0.1"
+        timeout: 10
+        msg: "Port 5380 (Technitium API) is not listening"
+
+    - name: Install dnsutils for dig
+      ansible.builtin.apt:
+        name: dnsutils
+        state: present
+        update_cache: false
+
+    - name: Verify vault.home.test resolves via Technitium
+      ansible.builtin.command:
+        cmd: dig +short vault.home.test @127.0.0.1
+      register: dns_result
+      changed_when: false
+      failed_when: dns_result.stdout == "" or dns_result.rc != 0
+
+    - name: Assert DNS result is non-empty
+      ansible.builtin.assert:
+        that:
+          - dns_result.stdout != ""
+        fail_msg: "vault.home.test did not resolve via Technitium on 127.0.0.1"
+        success_msg: "vault.home.test resolved to {{ dns_result.stdout }}"

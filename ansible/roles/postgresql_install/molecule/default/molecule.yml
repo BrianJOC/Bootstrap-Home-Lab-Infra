@@ -1,0 +1,26 @@
+---
+dependency:
+  name: galaxy
+  options:
+    requirements-file: ../../../../requirements.yml
+driver:
+  name: delegated
+platforms:
+  - name: instance
+    address: "127.0.0.1"  # overridden by MOLECULE_TARGET env var in test harness
+provisioner:
+  name: ansible
+  connection_options:
+    ansible_ssh_private_key_file: "../../../../test/keys/test_id_ed25519"
+    ansible_user: ansible
+  inventory:
+    hosts:
+      all:
+        hosts:
+          instance:
+            ansible_host: "${MOLECULE_TARGET:-127.0.0.1}"
+verifier:
+  name: ansible
+lint: |
+  set -e
+  ansible-lint
