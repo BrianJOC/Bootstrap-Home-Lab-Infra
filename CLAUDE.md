@@ -8,8 +8,7 @@ internally-networked infrastructure platform driven by IaC and GitOps.
 
 Stack: Ansible (initial deployment), Terraform (GitOps via GitLab), HashiCorp Vault
 (secrets), Authentik (SSO), Technitium DNS, GitLab + Runner, MAAS (server provisioning),
-PostgreSQL (shared backing service), Cloudflare DNS-01 (TLS), TUI (Python/Textual
-or Go/Bubbletea — TBD).
+PostgreSQL (shared backing service), Cloudflare DNS-01 (TLS), TUI (Go + Bubbletea + Lipgloss).
 
 ## Bootstrap Stage Order
 
@@ -40,20 +39,25 @@ requirements-analyst → workflow-architect → spec-writer → software-archite
 | `security-engineer` | Reviews secrets handling, Vault config, SSO wiring, TLS, and credential flows |
 | `product-manager` | Keeps scope clear; maintains stage status; triages new ideas to current vs. backlog |
 
-## Key Architectural Decisions (to be resolved)
+## Key Architectural Decisions
 
-- **TUI framework**: Python/Textual vs Go/Bubbletea — defer to software-architect
-- **Vault unseal strategy**: manual Shamir shares vs. auto-unseal — defer to security-engineer
+- **TUI framework**: Go + Bubbletea + Lipgloss
+- **Vault unseal strategy**: Manual Shamir shares — keys written to `vault-init.json`
 - **Terraform state migration**: local state during bootstrap → GitLab HTTP backend post-bootstrap
-- **MAAS scope**: full MAAS vs. lighter alternative (Netboot.xyz + PXE) — TBD
+- **Deployment model**: Named k8s clusters (any node provisioner) + bare metal via MAAS/Ansible
+- **Scheduler**: k3s — clusters are IaC-defined targets, Kubernetes handles internal scheduling
 
 ## Testing Strategy
 
-| Layer | Tool | Location | When to write |
-|-------|------|----------|---------------|
-| Ansible idempotency | `ansible-playbook --check` | `ansible/` | Every role, run twice |
+| Layer | Tool | Location | When to run |
+|-------|------|----------|-------------|
+| Ansible role | Molecule (QEMU driver) | `ansible/roles/<name>/` | Every role change; idempotency check (run twice) |
+| Bootstrap stage | `just test-stage <name>` | `test/` | Per stage, before merge |
+| Full end-to-end | `just test-bootstrap` | `test/` | Pre-release / integration |
 | Terraform plan | `terraform plan` | `terraform/` | Every module change |
-| Integration | Manual + TUI log | `logs/` | Per bootstrap stage completion |
+
+**Test environment**: QEMU + base `qcow2` (Ubuntu + SSH + ansible user w/ passwordless sudo),
+built via Packer (`just build-base-image`). Phase 2: image cached as GitLab CI artifact.
 
 ## Permissions
 

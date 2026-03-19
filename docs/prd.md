@@ -257,6 +257,60 @@ cluster or the service deployed to it.
 
 ---
 
+## Testing Strategy
+
+### Test Environment
+
+A QEMU-based test environment provides fast, repeatable, isolated testing against
+a clean target for every run.
+
+**Base image**: A minimal `qcow2` snapshot built with Packer (HCL):
+- Ubuntu (x86 + ARM builds)
+- SSH enabled
+- `ansible` user with passwordless sudo
+- No other services — clean slate
+
+**Two-phase image lifecycle:**
+
+| Phase | How | When |
+|-------|-----|------|
+| Phase 1 (pre-GitLab) | `just build-base-image` — Packer builds on demand locally | During bootstrap development |
+| Phase 2 (post-GitLab) | GitLab CI builds and caches image as a pipeline artifact; runners pull it | After GitLab is operational |
+
+The transition from Phase 1 → Phase 2 follows the same GitOps handoff pattern as
+the rest of the project: bootstrap builds locally, GitLab takes over once it exists.
+
+### Test Layers
+
+| Layer | Tool | Scope | When to run |
+|-------|------|-------|-------------|
+| Ansible role | Molecule (libvirt/QEMU driver) | Single role against QEMU VM; idempotency check (run twice) | Every role change |
+| Bootstrap stage | `just test-stage <name>` | Full stage run against fresh QEMU VM from base snapshot | Per stage, before merge |
+| Full bootstrap | `just test-bootstrap` | End-to-end bootstrap sequence on a single QEMU VM | Pre-release / integration |
+| Terraform plan | `terraform plan` | Module change validation, no live infra required | Every module change |
+
+### Justfile targets (to be added)
+
+```justfile
+# Build the base QEMU test image via Packer
+build-base-image:
+    packer build test/images/base.pkr.hcl
+
+# Run Molecule tests for a specific Ansible role
+test-role role:
+    cd ansible/roles/{{ role }} && molecule test
+
+# Run a single bootstrap stage against a fresh QEMU VM
+test-stage stage:
+    go run ./cmd/bootstrap --target qemu --stage {{ stage }} --test
+
+# Run the full bootstrap end-to-end against a QEMU VM
+test-bootstrap:
+    go run ./cmd/bootstrap --target qemu --test
+```
+
+---
+
 ## Monitoring (planned, deferred — not v1)
 
 Uptime Kuma — lightweight, Authentik-compatible. `health_check` field included
