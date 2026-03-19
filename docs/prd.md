@@ -289,13 +289,31 @@ a clean target for every run.
 The transition from Phase 1 → Phase 2 follows the same GitOps handoff pattern as
 the rest of the project: bootstrap builds locally, GitLab takes over once it exists.
 
+### Test Doubles (External Services)
+
+Tests must never call real external APIs. Two test doubles replace external
+dependencies for Stage 2 and any test involving TLS cert issuance:
+
+| Real service | Test double | Purpose |
+|---|---|---|
+| Let's Encrypt (ACME) | **Pebble** + `challtestsrv` | Local ACME CA; handles DNS-01 challenge verification without real DNS propagation |
+| Cloudflare DNS API | **Cloudflare API mock** (simple HTTP stub) | Responds to list-zones, create-TXT-record, delete-TXT-record with success; no real DNS touched |
+
+Both run as containers alongside the QEMU VM during Stage 2 tests.
+
+The bootstrap tool must support these overrides from the start (retrofitting is painful):
+- `ACME_SERVER_URL` env var (or `--acme-server` flag) — points at Pebble instead of Let's Encrypt
+- `CLOUDFLARE_API_BASE_URL` env var — points at the mock instead of `api.cloudflare.com`
+
+These are test-only env vars, set in the test harness, never in `.env` for real runs.
+
 ### Test Layers
 
 | Layer | Tool | Scope | When to run |
 |-------|------|-------|-------------|
 | Ansible role | Molecule (libvirt/QEMU driver) | Single role against QEMU VM; idempotency check (run twice) | Every role change |
-| Bootstrap stage | `just test-stage <name>` | Full stage run against fresh QEMU VM from base snapshot | Per stage, before merge |
-| Full bootstrap | `just test-bootstrap` | End-to-end bootstrap sequence on a single QEMU VM | Pre-release / integration |
+| Bootstrap stage | `just test-stage <name>` | Full stage run against fresh QEMU VM from base snapshot; external APIs mocked | Per stage, before merge |
+| Full bootstrap | `just test-bootstrap` | End-to-end bootstrap sequence on a single QEMU VM; external APIs mocked | Pre-release / integration |
 | Terraform plan | `terraform plan` | Module change validation, no live infra required | Every module change |
 
 ### Justfile targets (to be added)

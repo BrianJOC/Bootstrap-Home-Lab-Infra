@@ -40,6 +40,7 @@ No test may produce a password prompt. Every test must complete unattended once 
 6. Every failure mode has an operator decision path: retry, skip, rollback, or abort
 7. `vault-init.json` write failure is a hard halt — no recovery path discards unseal keys
 8. Every Ansible role and binary selection must branch on detected arch (x86_64 or aarch64)
+9. Tests never call real external APIs. Stage 2 uses Pebble (`ACME_SERVER_URL`) and a Cloudflare API mock (`CLOUDFLARE_API_BASE_URL`). Both overrides must be supported by the bootstrap tool from initial design — not retrofitted
 
 ---
 
@@ -303,17 +304,32 @@ Stage 2 obtains a publicly trusted wildcard TLS certificate for `*.home.<domain>
 | Let's Encrypt rate limit exceeded | lego returns rate-limit error | Emit warning with next-available timestamp; operator must wait; `[VERIFY]` retry or abort; do not loop automatically |
 | Cert validation fails (corrupt PEM, wrong SAN) | PEM parse or SAN check fails after issuance | Emit specific validation failure; delete corrupt file; `[VERIFY]` reissue or abort |
 
+### Test Environment (Stage 2)
+
+Stage 2 tests never call real external APIs. Two containers run alongside the QEMU VM:
+
+- **Pebble** (`letsencrypt/pebble`) + **`challtestsrv`** — local ACME CA; handles DNS-01 challenge verification without real DNS propagation
+- **Cloudflare API mock** — HTTP stub responding to list-zones, create-TXT-record, and delete-TXT-record with success; no real Cloudflare calls made
+
+Required overrides (set by test harness, never in `.env` for real runs):
+- `ACME_SERVER_URL=https://localhost:14000/dir` — points lego at Pebble
+- `CLOUDFLARE_API_BASE_URL=http://localhost:8080` — points lego at the mock
+
+The bootstrap tool must support both overrides. They must be wired in at design time — not retrofitted.
+
 ### Test Cases
 
 #### Happy Path
 
+- Start Pebble, `challtestsrv`, and Cloudflare API mock containers
 - Boot fresh QEMU VM; run Stages 0–1 first to satisfy prerequisites
-- Run `just test-stage tls` with valid test Cloudflare credentials
+- Run `just test-stage tls` with test overrides (`ACME_SERVER_URL`, `CLOUDFLARE_API_BASE_URL`)
 - Assert: `./certs/home.test/fullchain.pem` exists and is parseable
 - Assert: `./certs/home.test/privkey.pem` exists
 - Assert: `./certs/home.test/meta.json` exists with correct expiry and SANs
 - Assert: cert subject is `*.home.test`; SANs include both wildcard and apex
-- Assert: log does not contain the Cloudflare token value
+- Assert: log does not contain the `CF_DNS_API_TOKEN` value
+- Assert: no calls made to `api.cloudflare.com` or `acme-v02.api.letsencrypt.org`
 - Assert: log contains `[INFO] stage=tls status=complete`
 
 #### Idempotency
@@ -326,14 +342,15 @@ Stage 2 obtains a publicly trusted wildcard TLS certificate for `*.home.<domain>
 
 #### Failure Injection
 
-- **Invalid Cloudflare token**: set `CF_DNS_API_TOKEN` to a garbage value; assert Cloudflare API error is surfaced; assert `[PROMPT]` for corrected token appears; assert token value is not in logs
-- **Cloudflare API unreachable**: block outbound port 443 from QEMU VM via firewall rule; assert TCP check fails within 10s; assert `[VERIFY]` prompt appears
-- **Cert file corrupt**: write garbage bytes to `./certs/home.test/fullchain.pem` before run; assert corrupt file is detected; assert reissuance is attempted
+- **Invalid Cloudflare token**: configure mock to return 403; assert API error is surfaced; assert `[PROMPT]` for corrected token; assert token value is not in logs
+- **Cloudflare API unreachable**: stop the mock container; assert TCP check fails within 10s; assert `[VERIFY]` prompt appears
+- **ACME server unreachable**: stop Pebble container; assert connection error surfaces; assert `[VERIFY]` prompt appears
+- **Cert file corrupt**: write garbage bytes to `./certs/home.test/fullchain.pem` before run; assert corrupt file detected; assert reissuance attempted
 
 #### Edge Cases
 
-- Cert expiring in 15 days: assert stage treats it as missing and reissues even though the file exists
-- ARM64 QEMU VM: assert lego aarch64 binary is deployed; assert cert issuance works with aarch64 binary
+- Cert expiring in 15 days: assert stage treats it as expired and reissues
+- ARM64 QEMU VM: assert lego aarch64 binary deployed; cert issuance succeeds
 - Domain with multiple labels (e.g. `lab.home.example.com`): assert wildcard covers `*.lab.home.example.com`
 
 ---
