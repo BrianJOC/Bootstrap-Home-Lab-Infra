@@ -47,6 +47,22 @@ requirements-analyst → workflow-architect → spec-writer → software-archite
 - **Deployment model**: Named k8s clusters (any node provisioner) + bare metal via MAAS/Ansible
 - **Scheduler**: k3s — clusters are IaC-defined targets, Kubernetes handles internal scheduling
 
+## Implementation Strategy
+
+### Wave 1 — Parallel (git worktrees)
+All four workstreams are independent and dispatched simultaneously:
+- `impl/go-skeleton` — Go binary: TUI, config, stage runner interface, SSH client
+- `impl/ansible-roles` — All 7 Ansible roles authored together
+- `impl/test-infra` — Packer base image, Pebble mock, Cloudflare mock, Molecule scaffolding
+- `impl/terraform-modules` — All Terraform modules
+
+### Wave 2 — Sequential validation
+One stage at a time, in dependency order. Each stage must pass all spec acceptance
+criteria, idempotency check, code-reviewer, and security-engineer before the next begins.
+
+### Wave 3 — Terraform wiring (after Stage 6)
+Terraform modules wired to real backends in parallel once GitLab is operational.
+
 ## Testing Strategy
 
 | Layer | Tool | Location | When to run |
