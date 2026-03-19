@@ -74,7 +74,7 @@ at any machine, and idempotent.
 | Container scheduler | k3s | Familiar, lightweight, IaC-managed via Terraform k8s provider |
 | Bare metal IaC | MAAS (single-region, minimal) | Terraform provider, treats bare metal as resource, scales up |
 | Vault unseal | Manual Shamir shares | Keys written to `vault-init.json`; appropriate homelab tradeoff |
-| Domain config | `config.yaml` / interactive TUI | No hardcoded values; tool usable by others |
+| Config split | `config.yaml` (structural) + `.env` (secrets) | Structural config benefits from structure; secrets never in YAML files |
 | TLS | Cloudflare DNS-01 | No public exposure required; publicly trusted certs |
 | Secrets | HashiCorp Vault | Source of truth for all credentials and certs |
 | SSO | Authentik | OIDC for web services; group-based access control |
@@ -227,8 +227,14 @@ cluster or the service deployed to it.
 - **TUI**: Bubbletea + Lipgloss — multi-pane: progress per stage, live log pane,
   error panel with log file path reference
 - **CLI**: headless mode for re-runs and CI — `bootstrap --target <ip> --stage <name>`
-- **Config**: `config.yaml` for domain, credentials, target IPs; populated
-  interactively on first run or pre-supplied for automated use
+- **Config split**:
+  - `config.yaml` — non-sensitive structural config: domain, IPs, VLAN settings,
+    cluster names, SSH key path, Vault share counts. Populated interactively on
+    first run or pre-supplied. Safe to commit a template (`config.yaml.example`).
+  - `.env` — secrets only: Cloudflare API token, admin passwords, any initial
+    tokens. Never committed. Populated interactively on first run or pre-supplied
+    for headless/CI use. Loaded into the process environment; never written to
+    logs or `config.yaml`.
 - **Idempotency**: every stage checks preconditions before running; safe to re-run
 - **Output**: `vault-init.json` with unseal keys + root token (warning displayed)
 

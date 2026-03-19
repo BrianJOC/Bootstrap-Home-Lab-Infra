@@ -33,7 +33,7 @@ No test may produce a password prompt. Every test must complete unattended once 
 ### Global Invariants (carried through every spec)
 
 1. Any stage that touches Vault must assert Vault is unsealed before proceeding
-2. Credentials (Cloudflare token, PostgreSQL passwords, GitLab tokens, Authentik secrets) are injected as environment variables at runtime; never written to logs, TUI plaintext, or `config.yaml`
+2. Config is split: `config.yaml` holds non-sensitive structural config (domain, IPs, VLAN settings, SSH key path, Vault share counts); `.env` holds secrets (Cloudflare token, admin passwords, tokens). Secrets are loaded into process environment at runtime — never written to logs, TUI plaintext, or `config.yaml`
 3. Every stage begins with an idempotency gate: check whether target state exists; skip creation if it does
 4. Every `[AUTO]` failure emits to both TUI error panel and log file with absolute path and line reference: `see: <abs-path>/logs/run-<timestamp>/bootstrap.log:<line>`
 5. DNS resolution and port reachability are explicit numbered checks, never assumed
@@ -47,97 +47,112 @@ No test may produce a password prompt. Every test must complete unattended once 
 
 ### Summary
 
-Stage 0 is the entry point for every bootstrap run. It collects all required configuration values either interactively via TUI prompts or from an existing `config.yaml`, validates SSH connectivity to the target host, detects target architecture and OS version, and writes the run manifest. All subsequent stages depend on the outputs of this stage. No secrets are written to `config.yaml`; the Cloudflare token and admin password are stored as environment variable references or in the local OS keychain.
+Stage 0 is the entry point for every bootstrap run. It collects all required configuration values either interactively via TUI prompts or from existing `config.yaml` and `.env` files, validates SSH connectivity to the target host, detects target architecture and OS version, and writes the run manifest. Config is split: structural values go to `config.yaml`; secrets go to `.env`. All subsequent stages depend on the outputs of this stage.
 
 ### Inputs
+
+**Structural config (`config.yaml`):**
 
 | Input | Source | Required | Notes |
 |-------|--------|----------|-------|
 | Target host IP or hostname | Operator (TUI prompt or `--target` flag) | Yes | Must be SSH-reachable |
 | SSH user | Operator (TUI prompt, default `ubuntu`) | Yes | Must have passwordless sudo |
-| SSH key path | Operator (TUI prompt, default `~/.ssh/id_ed25519`) | Yes | Private key used for all subsequent SSH |
+| SSH key path | Operator (TUI prompt, default `~/.ssh/id_ed25519`) | Yes | Path only — key never written to config |
 | Internal domain | Operator (TUI prompt) | Yes | e.g. `home.example.com`; used for all DNS and TLS |
-| Cloudflare API token | Operator (TUI masked input) | Yes | Never written to disk or logs |
 | Cloudflare zone ID | Operator (TUI prompt) | Yes | Zone for internal domain |
 | Bootstrap server static IP | Operator (TUI prompt) | Yes | Used for DNS records and Vault listener |
 | Lab VLAN subnet (CIDR) | Operator (TUI prompt) | Yes | MAAS will manage DHCP on this segment |
+| Lab VLAN ID | Operator (TUI prompt) | Yes | VLAN ID configured on Unifi |
 | Admin email | Operator (TUI prompt) | Yes | Used for Vault, GitLab, Authentik admin accounts |
-| Initial admin password | Operator (TUI masked input) | Yes | Must meet minimum strength; never written to disk |
 | Vault unseal shares count | Operator (TUI prompt, default `5`) | Yes | Minimum `3` |
 | Vault unseal threshold | Operator (TUI prompt, default `3`) | Yes | Must be <= shares count |
 | Existing `config.yaml` | Filesystem at `./config.yaml` | No | If present, values loaded as defaults; operator reviews before proceeding |
 
+**Secrets (`.env`):**
+
+| Input | Env var | Required | Notes |
+|-------|---------|----------|-------|
+| Cloudflare API token | `CF_DNS_API_TOKEN` | Yes | Never written to disk or logs |
+| Initial admin password | `BOOTSTRAP_ADMIN_PASSWORD` | Yes | Must meet minimum strength; never written to disk |
+| Existing `.env` | Filesystem at `./.env` | No | If present, values loaded; operator reviews masked before proceeding |
+
 ### Outputs / Postconditions
 
-1. `./config.yaml` exists, is valid YAML, and contains all required non-secret fields
-2. `./config.yaml` contains no plaintext secrets (Cloudflare token and admin password are environment variable references or keychain references only)
-3. `./logs/run-<timestamp>/manifest.json` exists and contains: target host, arch, config hash, start time
-4. SSH connectivity to the target host is confirmed (key-based, no password prompt)
-5. Target architecture is detected and stored in the run manifest (`x86_64` or `aarch64`)
-6. Target OS is confirmed as Ubuntu >= 22.04
-7. TUI log contains: `[INFO] stage=config-collection status=complete`
-8. Log file contains: `[INFO] bootstrap started; target=<ip>; pid=<pid>` and `[INFO] config written; path=./config.yaml`
+1. `./config.yaml` exists, is valid YAML, and contains all required non-secret structural fields
+2. `./config.yaml` contains no secrets — no tokens, passwords, or credentials of any kind
+3. `./.env` exists and contains all required secret env vars; file has mode `0600`
+4. `./logs/run-<timestamp>/manifest.json` exists and contains: target host, arch, config hash (not values), start time
+5. SSH connectivity to the target host is confirmed (key-based, no password prompt)
+6. Target architecture is detected and stored in the run manifest (`x86_64` or `aarch64`)
+7. Target OS is confirmed as Ubuntu >= 22.04
+8. TUI log contains: `[INFO] stage=config-collection status=complete`
+9. Log file contains: `[INFO] bootstrap started; target=<ip>; pid=<pid>`, `[INFO] config written; path=./config.yaml`, `[INFO] env written; path=./.env`
 
 ### Acceptance Criteria
 
-1. Running the bootstrap binary on a machine with no `config.yaml` presents all required TUI prompts in order; filling them all and confirming produces a valid `config.yaml` and run manifest
-2. Running the bootstrap binary when a valid `config.yaml` already exists loads its values as defaults and presents them for review without re-prompting for each field from scratch
-3. Providing a malformed YAML file at `./config.yaml` produces an error message identifying the file and parse location; the operator is prompted to correct it or start fresh
-4. Providing an invalid IP address in the target host field produces an inline validation error without clearing other fields
-5. Providing a password that does not meet minimum strength requirements produces an inline validation error specifying the requirement that failed
-6. SSH connection failure with the correct key but wrong host produces an error with the specific reason (connection refused vs. auth failure vs. timeout) and re-prompts for host/user/key values
-7. After SSH connection is established, target architecture is correctly detected as `x86_64` or `aarch64` and written to the run manifest
-8. A target running Ubuntu 20.04 produces a `[VERIFY]` warning prompt; the operator can choose to continue at own risk or abort; the test must confirm both paths work
-9. `--headless` flag with a complete `config.yaml` produces no prompts, writes the run manifest, confirms SSH, and exits cleanly; any missing required value causes a hard failure with an explicit field name in the error
-10. `--stage <name>` flag with a valid `config.yaml` skips config collection and jumps directly to the named stage
-11. The Cloudflare token and admin password do not appear in `config.yaml`, TUI output, or log files at any point
-12. TUI displays all required observable states: `Stage 0: Config collection — starting`, `Verifying SSH connectivity...`, `SSH connection verified`, `Stage 0: Config collection — complete`
-13. `./logs/run-<timestamp>/manifest.json` contains target, arch, a config hash (not the config values themselves), and start time ISO timestamp
+1. Running the bootstrap binary with no `config.yaml` or `.env` presents all required TUI prompts in order; confirming produces a valid `config.yaml`, a `.env` with mode `0600`, and a run manifest
+2. Running the bootstrap binary when `config.yaml` already exists loads structural values as defaults and presents them for review; `.env` secrets are re-prompted masked
+3. Providing a malformed `config.yaml` produces an error identifying the file and parse location; operator is prompted to correct or start fresh
+4. Providing an invalid IP address produces an inline validation error without clearing other fields
+5. Providing a password that does not meet minimum strength requirements produces an inline validation error specifying the failed requirement
+6. SSH connection failure produces an error with the specific reason (refused / auth failure / timeout) and re-prompts for host/user/key
+7. Target architecture is correctly detected as `x86_64` or `aarch64` and written to the run manifest
+8. A target running Ubuntu 20.04 produces a `[VERIFY]` warning; operator can continue at own risk or abort; both paths are tested
+9. `--headless` flag with complete `config.yaml` and `.env` produces no prompts, writes manifest, confirms SSH, exits cleanly; any missing required value causes a hard failure naming the missing field
+10. `--stage <name>` flag skips config collection and jumps directly to the named stage
+11. No secret value appears in `config.yaml`, TUI output, or log files at any point
+12. `.env` file has mode `0600` immediately after write; bootstrap exits with error if it detects mode is wider
+13. TUI displays all required observable states in order
+14. `./logs/run-<timestamp>/manifest.json` contains a config hash (not values) and start time ISO timestamp
 
 ### Failure Modes
 
 | Failure | Detection | Recovery |
 |---------|-----------|----------|
-| `config.yaml` parse error | YAML parse error on load; error emitted to TUI and log | Operator corrects file or deletes it to trigger fresh collection |
-| Input validation failure (invalid IP, weak password, malformed token) | Inline TUI validation on field exit | Re-prompt the specific failed field; do not clear other fields |
-| SSH connection refused | TCP connect to port 22 times out or returns RST within 10s | Emit specific error; `[PROMPT]` for corrected host/user/key; retry |
-| SSH auth failure | SSH handshake succeeds but key rejected | Emit "auth failure" error; `[PROMPT]` for corrected key path; retry |
-| `uname -m` command fails | Non-zero exit code from SSH command | Emit warning; operator prompted to confirm arch manually or abort |
-| OS version check fails (non-Ubuntu or < 22.04) | `lsb_release` output does not match pattern | `[VERIFY]` warning prompt; operator can continue at own risk or abort |
+| `config.yaml` parse error | YAML parse error on load | Operator corrects file or deletes it to trigger fresh collection |
+| `.env` missing required var in headless mode | Env var unset at stage start | Hard failure naming the missing var; no prompts shown |
+| Input validation failure | Inline TUI validation on field exit | Re-prompt failed field only; retain all other values |
+| SSH connection refused | TCP connect to port 22 times out or RST within 10s | Emit specific error; `[PROMPT]` for corrected host/user/key; retry |
+| SSH auth failure | SSH handshake succeeds but key rejected | Emit "auth failure"; `[PROMPT]` for corrected key path; retry |
+| `uname -m` fails | Non-zero SSH exit code | Warn; operator prompted to confirm arch manually or abort |
+| OS version check fails | `lsb_release` output does not match Ubuntu >= 22.04 | `[VERIFY]` warning; operator can continue at own risk or abort |
+| `.env` write fails (permissions) | Non-zero write return | Emit error with path; abort stage |
 
 ### Test Cases
 
 #### Happy Path
 
 - Boot fresh QEMU VM from base qcow2 snapshot
-- Run bootstrap binary with no pre-existing `config.yaml`
-- Fill all TUI prompts with valid test values (domain `home.test`, target `<qemu-ip>`, key `test/keys/test_id_ed25519`)
-- Assert: `config.yaml` written with correct non-secret values; no secrets in file
-- Assert: `./logs/run-<timestamp>/manifest.json` exists with correct arch and target
+- Run bootstrap binary with no pre-existing `config.yaml` or `.env`
+- Fill all TUI prompts with valid test values; supply secrets via masked prompts
+- Assert: `config.yaml` written with correct structural values; no secrets present
+- Assert: `.env` written with correct env vars; mode is `0600`; no values in logs
+- Assert: `manifest.json` exists with correct arch, target, and config hash
 - Assert: log contains `[INFO] stage=config-collection status=complete`
 - Assert: TUI showed all observable states in order
 
 #### Idempotency
 
-- Run stage 0 a second time with the existing `config.yaml`
-- Assert: values loaded as defaults; no fields require re-entry beyond the review step
-- Assert: a new `manifest.json` is written for the new run (different timestamp); old one is not overwritten
-- Assert: log contains `[INFO] config written; path=./config.yaml` exactly once per run
+- Run stage 0 a second time with existing `config.yaml` and `.env`
+- Assert: structural values loaded as defaults; secrets re-prompted masked
+- Assert: new `manifest.json` written (different timestamp); old one not overwritten
 
 #### Failure Injection
 
-- **SSH connection refused**: provide a non-existent target IP; assert error identifies "connection refused" and re-prompts for host
-- **SSH auth failure**: use a wrong private key; assert error identifies "auth failure" and re-prompts for key path
-- **Malformed `config.yaml`**: write syntactically invalid YAML to `./config.yaml` before run; assert parse error with file path in message; assert operator is prompted to fix or delete
-- **Weak password**: enter a password shorter than minimum in TUI; assert inline validation error on that field alone; assert other fields retain their values
-- **OS mismatch**: boot a QEMU VM with Ubuntu 20.04; assert `[VERIFY]` warning is shown; assert both continue and abort paths work correctly
+- **SSH refused**: non-existent target IP; assert error names "connection refused"; re-prompts host
+- **SSH auth failure**: wrong private key; assert "auth failure" error; re-prompts key path
+- **Malformed `config.yaml`**: write invalid YAML before run; assert parse error with file path; operator prompted to fix or delete
+- **Weak password**: password below minimum strength; assert inline validation error on that field only
+- **OS mismatch**: Ubuntu 20.04 QEMU VM; assert `[VERIFY]` warning; assert both continue and abort paths work
+- **`.env` too-permissive mode**: manually set `.env` to `0644` before run; assert bootstrap detects and errors
 
 #### Edge Cases
 
-- `--headless` mode with a `config.yaml` missing one required field: assert hard failure naming the missing field; assert no prompts are shown
-- Target arch `aarch64`: assert ARM VM is correctly detected and manifest records `aarch64`
-- Very long domain name (63-char label): assert it passes validation
-- Domain with hyphens: assert it passes validation
+- `--headless` with `config.yaml` missing one structural field: hard failure naming the field; no prompts
+- `--headless` with `.env` missing one secret: hard failure naming the env var; no prompts
+- Target arch `aarch64`: ARM VM correctly detected; manifest records `aarch64`
+- Very long domain name (63-char label): passes validation
+- Domain with hyphens: passes validation
 
 ---
 
@@ -154,7 +169,7 @@ Stage 1 deploys Technitium DNS on the target host and configures it as the autho
 | `config.yaml` | Stage 0 output | Yes | Must be valid and loaded |
 | `config.internal_domain` | `config.yaml` | Yes | e.g. `home.example.com` |
 | `config.bootstrap_server_ip` | `config.yaml` | Yes | IP Technitium binds to; used for all A records |
-| `config.admin_password` | Runtime env (never disk) | Yes | Technitium API authentication |
+| `BOOTSTRAP_ADMIN_PASSWORD` | `.env` (runtime env) | Yes | Technitium API authentication; never written to disk |
 | SSH access to target host | Stage 0 postcondition | Yes | Key-based, no password |
 | Target arch | Stage 0 run manifest | Yes | Determines Docker install path if needed |
 
@@ -192,7 +207,7 @@ Stage 1 deploys Technitium DNS on the target host and configures it as the autho
 |---------|-----------|----------|
 | Ansible role fails (Docker install, port conflict) | Non-zero Ansible exit code; emitted to log | Emit error + log path to TUI; `[VERIFY]` retry or abort stage |
 | Technitium health poll timeout (120s) | No HTTP 200 from `:5380/api/user/login` within timeout | Dump container logs to log file; emit path; `[VERIFY]` retry or abort |
-| Technitium API auth failure | HTTP 401 or 403 from API | Emit error identifying credential mismatch; operator corrects `config.yaml`; retry stage |
+| Technitium API auth failure | HTTP 401 or 403 from API | Emit error identifying credential mismatch; operator corrects `BOOTSTRAP_ADMIN_PASSWORD` in `.env`; retry stage |
 | DNS zone creation fails (Technitium API error) | Non-2xx response from Technitium zone API | Emit full API error to log; `[VERIFY]` retry or abort |
 | DNS resolution fails from operator's machine (port 53 blocked by firewall) | DNS query from operator machine returns NXDOMAIN or times out | Emit warning (non-blocking); note operator machine may need manual DNS config or split-DNS; target self-resolution is the critical check |
 | systemd-resolved config fails (locked config, wrong path) | SSH command returns non-zero exit | Emit specific error; provide manual resolution steps in TUI; `[VERIFY]` retry or abort |
@@ -245,7 +260,7 @@ Stage 2 obtains a publicly trusted wildcard TLS certificate for `*.home.<domain>
 
 | Input | Source | Required | Notes |
 |-------|--------|----------|-------|
-| `config.cloudflare_api_token` | Runtime env (never disk) | Yes | Injected as `CF_DNS_API_TOKEN`; never logged |
+| `CF_DNS_API_TOKEN` | `.env` (runtime env) | Yes | Never written to disk or logs |
 | `config.cloudflare_zone_id` | `config.yaml` | Yes | Zone ID for the internal domain in Cloudflare |
 | `config.internal_domain` | `config.yaml` | Yes | Wildcard cert covers `*.home.<domain>` and `home.<domain>` |
 | `config.admin_email` | `config.yaml` | Yes | ACME account email |
@@ -261,7 +276,7 @@ Stage 2 obtains a publicly trusted wildcard TLS certificate for `*.home.<domain>
 4. Certificate subject matches `*.home.<domain>`; SANs include `*.home.<domain>` and `home.<domain>`
 5. Certificate expiry is > 30 days from the time of issuance
 6. Certificate issuer is Let's Encrypt (or configured ACME CA)
-7. Cloudflare API token does not appear in any log file, TUI output, or `config.yaml`
+7. `CF_DNS_API_TOKEN` value does not appear in any log file, TUI output, `config.yaml`, or `.env` after initial write (`.env` stores the var reference, not the value, in log output)
 8. TUI log contains: `[INFO] stage=tls status=complete`
 9. Log file contains: `[INFO] tls-cert: cert issued; path=./certs/home.<domain>/` and `[INFO] tls-verify: cert valid; expiry=<date>`
 
