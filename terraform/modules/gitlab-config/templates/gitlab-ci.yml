@@ -1,0 +1,66 @@
+# GitLab CI/CD pipeline for infrastructure/iac
+# Runs terraform validate → plan → apply on merge to main
+
+image:
+  name: hashicorp/terraform:1.6
+  entrypoint: [""]
+
+variables:
+  TF_ROOT: ${CI_PROJECT_DIR}/terraform
+  TF_STATE_NAME: homelab
+
+stages:
+  - validate
+  - plan
+  - apply
+
+# Authenticate to Vault using GitLab CI JWT token
+.vault_auth: &vault_auth
+  before_script:
+    - |
+      VAULT_TOKEN=$(curl -sf \
+        --request POST \
+        --data "{\"jwt\": \"$CI_JOB_JWT_V2\", \"role\": \"$VAULT_ROLE\"}" \
+        "$VAULT_ADDR/v1/auth/$VAULT_AUTH_PATH/login" | jq -r '.auth.client_token')
+      export VAULT_TOKEN
+
+validate:
+  stage: validate
+  <<: *vault_auth
+  script:
+    - cd $TF_ROOT
+    - terraform init -backend=false
+    - terraform validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+plan:
+  stage: plan
+  <<: *vault_auth
+  script:
+    - cd $TF_ROOT
+    - terraform init
+    - terraform plan -out=tfplan
+  artifacts:
+    paths:
+      - $TF_ROOT/tfplan
+    expire_in: 1 week
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+apply:
+  stage: apply
+  <<: *vault_auth
+  script:
+    - cd $TF_ROOT
+    - terraform init
+    - terraform apply -auto-approve tfplan
+  dependencies:
+    - plan
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+  environment:
+    name: production

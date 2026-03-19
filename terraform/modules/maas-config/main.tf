@@ -1,0 +1,61 @@
+terraform {
+  required_version = ">= 1.6"
+  required_providers {
+    maas = {
+      source  = "maas/maas"
+      version = "~> 2.3"
+    }
+  }
+}
+
+provider "maas" {
+  api_version = "2.0"
+  api_key     = var.maas_api_key
+  api_url     = var.maas_api_url
+}
+
+# ── Network Topology ──────────────────────────────────────────────────────────
+
+resource "maas_space" "homelab" {
+  name = "homelab"
+}
+
+resource "maas_fabric" "homelab" {
+  name = "homelab-fabric"
+}
+
+resource "maas_vlan" "lab" {
+  fabric = maas_fabric.homelab.id
+  vid    = var.lab_vlan_id
+  name   = "lab-vlan"
+  space  = maas_space.homelab.name
+  mtu    = 1500
+}
+
+resource "maas_subnet" "lab" {
+  cidr        = var.lab_subnet
+  fabric      = maas_fabric.homelab.id
+  vlan        = maas_vlan.lab.id
+  name        = "lab-subnet"
+  gateway_ip  = var.lab_gateway
+  dns_servers = [var.dns_server]
+
+  ip_ranges {
+    type     = "dynamic"
+    start_ip = var.dhcp_range_low
+    end_ip   = var.dhcp_range_high
+    comment  = "MAAS-managed DHCP dynamic range for lab VLAN"
+  }
+}
+
+# ── DHCP ──────────────────────────────────────────────────────────────────────
+# MAAS owns DHCP on the lab VLAN; Unifi must be configured to NOT serve DHCP
+# on this segment and to trunk the VLAN to the MAAS server's network interface.
+
+resource "maas_subnet_ip_range" "reserved" {
+  subnet   = maas_subnet.lab.id
+  type     = "reserved"
+  start_ip = var.lab_gateway
+  end_ip   = var.lab_gateway
+  comment  = "Reserved: lab gateway IP"
+}

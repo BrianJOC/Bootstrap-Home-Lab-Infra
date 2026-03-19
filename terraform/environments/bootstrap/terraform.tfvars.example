@@ -1,0 +1,35 @@
+# terraform.tfvars.example
+# Copy to terraform.tfvars and fill in your values.
+# DO NOT commit terraform.tfvars — it may contain sensitive values.
+# Sensitive values (tokens, keys) should be passed via TF_VAR_* env vars instead.
+
+# ── Common ────────────────────────────────────────────────────────────────────
+internal_domain     = "home.example.com"
+bootstrap_server_ip = "192.168.1.10"
+
+# ── DNS (Technitium) ──────────────────────────────────────────────────────────
+technitium_url = "http://192.168.1.10:5380"
+# technitium_api_token = ""   # set via: export TF_VAR_technitium_api_token=...
+
+# ── Vault ─────────────────────────────────────────────────────────────────────
+vault_address = "https://vault.home.example.com:8200"
+cert_path     = "/path/to/certs/home.example.com/fullchain.pem"
+key_path      = "/path/to/certs/home.example.com/privkey.pem"
+# vault_token = ""   # set via: export TF_VAR_vault_token=...
+
+# ── Authentik ─────────────────────────────────────────────────────────────────
+authentik_url = "https://authentik.home.example.com"
+# authentik_token = ""   # set via: export TF_VAR_authentik_token=...
+
+# ── GitLab ────────────────────────────────────────────────────────────────────
+gitlab_url = "https://gitlab.home.example.com"
+# gitlab_token = ""   # set via: export TF_VAR_gitlab_token=...
+
+# ── MAAS ──────────────────────────────────────────────────────────────────────
+maas_api_url    = "http://maas.home.example.com:5240/MAAS"
+lab_subnet      = "10.10.10.0/24"
+lab_vlan_id     = 10
+lab_gateway     = "10.10.10.1"
+dhcp_range_low  = "10.10.10.100"
+dhcp_range_high = "10.10.10.200"
+# maas_api_key = ""   # set via: export TF_VAR_maas_api_key=...
