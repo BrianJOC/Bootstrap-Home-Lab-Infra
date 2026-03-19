@@ -91,7 +91,7 @@ at any machine, and idempotent.
 | **GitLab + Runner** | GitOps platform, Terraform state backend | MR merged → pipeline runs → service deployed | Vault secrets injection; Terraform HTTP backend |
 | **PostgreSQL** | Shared DB for services | All dependent services connected and healthy | GitLab, Authentik, MAAS |
 | **MAAS** | Bare metal provisioning, lab VLAN DHCP | New server PXE boots, gets OS, appears in inventory | Unifi routes VLAN; MAAS owns DHCP on lab segment |
-| **k3s** | Flexible workload scheduling | Cluster healthy, workloads deployable via Terraform | MAAS provisions nodes; Ansible installs k3s; Terraform manages workloads |
+| **k3s clusters** | Named k8s infrastructure targets; Kubernetes handles internal scheduling | All defined clusters healthy, reachable as Terraform targets | MAAS provisions nodes; Ansible installs k3s; Terraform Helm provider deploys workloads |
 | **TLS / Cloudflare** | Publicly trusted certs via DNS-01 | Certs auto-issued and renewed | Vault stores and distributes certs |
 
 ---
@@ -108,31 +108,77 @@ Hard dependencies — do not reorder:
 6. **PostgreSQL** — Shared instance; databases created per service
 7. **GitLab + Runner** — GitOps online; Terraform state backend configured; Vault integration active
 8. **MAAS** — Bare metal provisioning ready; lab VLAN DHCP active
-9. **k3s** — Cluster provisioned via MAAS → Ansible → available as Terraform target
+9. **k3s clusters** — Each cluster defined as IaC; provisioned via MAAS → Ansible → registered as named Terraform target
 
 ---
 
 ## Service Definition Schema
 
+**Containerized service (k8s target):**
 ```yaml
 name: ollama-webui
 hostname: ollama.home.{{ domain }}     # → auto DNS record
-deploy_target: gpu-server              # omit for scheduler to pick
+target:
+  cluster: gpu-cluster                 # named k8s cluster (defined in infrastructure/)
+  helm_chart: open-webui
+  values: ./values/ollama.yaml
 authentik: true
 allowed_groups: [adults]
 health_check: http                     # hook for future monitoring
-resources:
-  gpu: true                            # k3s node selector
 ```
 
+**Protocol-native service (k8s target, no SSO proxy):**
 ```yaml
 name: minecraft
 hostname: mc.home.{{ domain }}
-deploy_target: ~                       # k3s schedules
+target:
+  cluster: general-cluster
+  helm_chart: minecraft
+  values: ./values/minecraft.yaml
 authentik: false
 allowed_groups: [adults, kids]
 health_check: tcp:25565
 ```
+
+**Bare metal service (direct MAAS target):**
+```yaml
+name: proxmox
+hostname: pve.home.{{ domain }}
+target:
+  maas_machine: big-iron              # named MAAS machine
+  ansible_role: proxmox
+authentik: false
+allowed_groups: [adults]
+health_check: http
+```
+
+---
+
+## Infrastructure Definition Schema
+
+Clusters and bare metal are defined separately as first-class IaC objects:
+
+```yaml
+# infrastructure/clusters/gpu-cluster.yaml
+name: gpu-cluster
+nodes:
+  - maas_machine: gpu-box
+    roles: [control-plane, worker]
+```
+
+```yaml
+# infrastructure/clusters/general-cluster.yaml
+name: general-cluster
+nodes:
+  - maas_machine: server-01
+    roles: [control-plane, worker]
+  - maas_machine: server-02
+    roles: [worker]
+```
+
+Multiple clusters are supported — you decide how many exist and what they're for.
+Kubernetes handles internal scheduling within each cluster (node selection,
+resource allocation). The service definition picks the cluster; k8s picks the node.
 
 ---
 
@@ -140,8 +186,8 @@ health_check: tcp:25565
 
 | Mode | When to use | IaC chain |
 |------|-------------|-----------|
-| Targeted bare metal | Proxmox host, GPU server, k3s node install | Ansible role on specific host |
-| k3s flexible | Stateless services, no hardware constraint | Terraform k8s provider → k3s |
+| k8s cluster (Helm) | Containerized services | MAAS → Ansible (k3s install) → Terraform Helm provider |
+| Bare metal (Ansible) | Proxmox host, GPU server, base OS config | MAAS provisions → Ansible role on named machine |
 | Proxmox VM | *(later phase)* | Terraform Proxmox provider |
 
 ---
