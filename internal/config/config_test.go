@@ -1,11 +1,15 @@
 package config
 
 import (
+<<<<<<< HEAD
 	"os"
+=======
+>>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)
 	"strings"
 	"testing"
 )
 
+<<<<<<< HEAD
 // validRunConfig returns a RunConfig with all required fields populated.
 func validRunConfig() *RunConfig {
 	return &RunConfig{
@@ -25,10 +29,31 @@ func validRunConfig() *RunConfig {
 		Secrets: &Secrets{
 			CloudflareAPIToken: "cf-token-value",
 			AdminPassword:      "s3cr3tpassword",
+=======
+// validRunConfig returns a fully populated *RunConfig that passes Validate.
+func validRunConfig() *RunConfig {
+	return &RunConfig{
+		Config: &Config{
+			TargetHost:        "192.168.1.10",
+			SSHUser:           "ubuntu",
+			SSHKeyPath:        "/home/user/.ssh/id_ed25519",
+			InternalDomain:    "lab.example.com",
+			CloudflareZoneID:  "abc123",
+			BootstrapServerIP: "192.168.1.1",
+			LabVLANSubnet:     "192.168.1.0/24",
+			AdminEmail:        "admin@example.com",
+			VaultShares:       5,
+			VaultThreshold:    3,
+		},
+		Secrets: &Secrets{
+			CloudflareAPIToken: "cf-token",
+			AdminPassword:      "secret-password",
+>>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)
 		},
 	}
 }
 
+<<<<<<< HEAD
 // ── Validate ──────────────────────────────────────────────────────────────────
 
 func TestValidate_Valid(t *testing.T) {
@@ -115,10 +140,111 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.substr) {
 				t.Errorf("error %q does not contain %q", err.Error(), tc.substr)
+=======
+// ── DataPath ──────────────────────────────────────────────────────────────────
+
+func TestDataPath_NoDisk(t *testing.T) {
+	c := &Config{}
+	if got := c.DataPath(); got != "" {
+		t.Errorf("DataPath() with no disk = %q, want empty string", got)
+	}
+}
+
+func TestDataPath_FullMode(t *testing.T) {
+	c := &Config{DataDisk: "/dev/sda", DataDiskMode: "full"}
+	if got := c.DataPath(); got != "/data" {
+		t.Errorf("DataPath() full mode = %q, want /data", got)
+	}
+}
+
+func TestDataPath_ModeUnset_DefaultsFull(t *testing.T) {
+	c := &Config{DataDisk: "/dev/sda"}
+	if got := c.DataPath(); got != "/data" {
+		t.Errorf("DataPath() with mode unset = %q, want /data", got)
+	}
+}
+
+func TestDataPath_MountOnlyMode(t *testing.T) {
+	c := &Config{DataDisk: "/dev/sda", DataDiskMode: "mount_only"}
+	if got := c.DataPath(); got != "" {
+		t.Errorf("DataPath() mount_only = %q, want empty string", got)
+	}
+}
+
+// ── Validate: data_disk ───────────────────────────────────────────────────────
+
+func TestValidate_DataDisk(t *testing.T) {
+	cases := []struct {
+		name      string
+		disk      string
+		mode      string
+		wantError bool
+		substr    string
+	}{
+		{
+			name: "valid sda",
+			disk: "/dev/sda", mode: "full",
+			wantError: false,
+		},
+		{
+			name: "valid nvme",
+			disk: "/dev/nvme0n1", mode: "full",
+			wantError: false,
+		},
+		{
+			name: "valid mmcblk",
+			disk: "/dev/mmcblk1", mode: "full",
+			wantError: false,
+		},
+		{
+			name: "valid virtio (QEMU)",
+			disk: "/dev/vdb", mode: "full",
+			wantError: false,
+		},
+		{
+			name:      "invalid path",
+			disk:      "/tmp/notadisk", mode: "full",
+			wantError: true, substr: "data_disk",
+		},
+		{
+			name:      "mode without disk",
+			disk:      "", mode: "full",
+			wantError: true, substr: "data_disk_mode",
+		},
+		{
+			name:      "invalid mode value",
+			disk:      "/dev/sda", mode: "wiped",
+			wantError: true, substr: "data_disk_mode",
+		},
+		{
+			name:      "empty disk and empty mode — valid SD-only",
+			disk:      "", mode: "",
+			wantError: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rc := validRunConfig()
+			rc.DataDisk = tc.disk
+			rc.DataDiskMode = tc.mode
+			err := Validate(rc)
+			if tc.wantError {
+				if err == nil {
+					t.Fatalf("expected error containing %q, got nil", tc.substr)
+				}
+				if !strings.Contains(err.Error(), tc.substr) {
+					t.Errorf("error %q does not contain %q", err.Error(), tc.substr)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+>>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)
 			}
 		})
 	}
 }
+<<<<<<< HEAD
 
 func TestValidate_InvalidInternalDomain(t *testing.T) {
 	cases := []string{
@@ -368,3 +494,5 @@ func TestLoad_SecretsFromEnv(t *testing.T) {
 		t.Errorf("AdminPassword: got %q, want %q", rc.Secrets.AdminPassword, "test-admin-pass")
 	}
 }
+=======
+>>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)

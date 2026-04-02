@@ -39,6 +39,30 @@ type Config struct {
 	ACMECACertURL string `yaml:"-"`
 	// Populated from CLOUDFLARE_API_BASE_URL env var; default: https://api.cloudflare.com
 	CloudflareAPIBaseURL string `yaml:"-"`
+	// DataDisk is the device path of the secondary storage disk (e.g. "/dev/sda").
+	// Empty means no secondary disk — all data remains on the OS disk.
+	DataDisk string `yaml:"data_disk"`
+	// DataDiskMode controls how the secondary disk is used.
+	// "full" (default): redirects Docker root and all service data to /data.
+	// "mount_only": formats and mounts at /data only; no service redirection.
+	DataDiskMode string `yaml:"data_disk_mode"`
+	// DataDiskForceFormat, when true, wipes the disk even if a filesystem is
+	// detected (other than LABEL=homelab-data). Requires explicit operator intent.
+	DataDiskForceFormat bool `yaml:"data_disk_force_format"`
+}
+
+// DataPath returns the root path for service data.
+// Returns "/data" when a secondary disk is configured in full mode.
+// Returns "" (empty) otherwise — Ansible roles interpret empty as "use native path".
+//
+// NOTE: This intentionally returns "" (not "/var/lib") when no disk is configured.
+// Existing roles use /opt/... native paths; returning "/var/lib" would silently
+// redirect data for single-disk targets. Empty = keep role-native defaults.
+func (c *Config) DataPath() string {
+	if c.DataDisk != "" && c.DataDiskMode != "mount_only" {
+		return "/data"
+	}
+	return ""
 }
 
 // Secrets holds all sensitive values sourced from the process environment (loaded from .env).
@@ -199,6 +223,20 @@ func Validate(rc *RunConfig) error {
 	}
 	if rc.VaultShares < 3 {
 		return fmt.Errorf("vault_shares must be >= 3, got %d", rc.VaultShares)
+	}
+
+	// Validate data_disk if set.
+	if rc.DataDisk != "" {
+		validDataDisk := regexp.MustCompile(`^/dev/(sd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|vd[a-z]+)$`)
+		if !validDataDisk.MatchString(rc.DataDisk) {
+			return fmt.Errorf("data_disk %q must be a block device path (/dev/sd*, /dev/nvme*, /dev/mmcblk*, /dev/vd*)", rc.DataDisk)
+		}
+	}
+	if rc.DataDiskMode != "" && rc.DataDisk == "" {
+		return fmt.Errorf("data_disk_mode requires data_disk to be set")
+	}
+	if rc.DataDiskMode != "" && rc.DataDiskMode != "full" && rc.DataDiskMode != "mount_only" {
+		return fmt.Errorf("data_disk_mode must be \"full\" or \"mount_only\", got %q", rc.DataDiskMode)
 	}
 
 	return nil
