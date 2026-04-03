@@ -16,6 +16,9 @@ vault-init.json
 # Runtime config with secrets — never commit
 .env
 
+# Test config backups
+config.yaml.bak
+
 # Go
 *.exe
 *.test

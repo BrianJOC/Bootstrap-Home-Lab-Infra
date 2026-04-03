@@ -1,0 +1,61 @@
+# config.yaml — Bootstrap configuration
+# Copy to config.yaml and fill in your values.
+# Secrets (CF_DNS_API_TOKEN, BOOTSTRAP_ADMIN_PASSWORD) go in .env, not here.
+
+# ── Required fields ─────────────────────────────────────────────────────────
+
+# IP address or hostname of the bootstrap target
+target_host: "192.168.1.100"
+
+# SSH user on the target (default: ubuntu)
+ssh_user: "ubuntu"
+
+# Path to your SSH private key
+ssh_key_path: "/home/user/.ssh/id_ed25519"
+
+# Internal DNS domain (e.g. home.lab, homelab.internal)
+internal_domain: "home.lab"
+
+# Cloudflare Zone ID for your domain (used for DNS-01 TLS challenge)
+cloudflare_zone_id: "your-zone-id-here"
+
+# IP of the bootstrap server itself (used for service binding and pg_hba)
+bootstrap_server_ip: "192.168.1.100"
+
+# VLAN subnet for the lab network
+lab_vlan_subnet: "10.0.0.0/24"
+
+# Admin email (used for ACME registration and Authentik admin account)
+admin_email: "admin@example.com"
+
+# Path where Vault init output (unseal keys + root token) will be written.
+# Store this securely — it is not committed to version control.
+vault_init_output_path: "./vault-init.json"
+
+# ── Optional fields ──────────────────────────────────────────────────────────
+
+# VLAN ID (0 = untagged)
+# lab_vlan_id: 0
+
+# Vault Shamir secret sharing parameters (defaults: 5 shares, threshold 3)
+# vault_shares: 5
+# vault_threshold: 3
+
+# ── Secondary disk (Raspberry Pi SSD hat, or any secondary block device) ────
+#
+# When configured, all Docker volumes and service data are redirected to the
+# secondary disk instead of the SD card / primary drive.
+#
+# data_disk: block device path of the secondary disk (e.g. /dev/sda, /dev/nvme0n1)
+# Leave unset for single-disk targets.
+# data_disk: "/dev/sda"
+#
+# data_disk_mode: how to use the secondary disk (default: full)
+#   "full"       — redirect Docker data-root and all service data to /data
+#   "mount_only" — format and mount at /data only; no service redirection
+# data_disk_mode: "full"
+#
+# data_disk_force_format: set to true to wipe the disk even if a filesystem
+# is already present (other than LABEL=homelab-data). Requires explicit
+# operator intent. Default: false.
+# data_disk_force_format: false
