@@ -3,6 +3,11 @@
 
 external_url 'https://gitlab.{{ internal_domain }}'
 
+{% if service_data_root %}
+# Redirect GitLab data to secondary disk
+git_data_dirs({ "default" => { "path" => "{{ service_data_root + '/gitlab' }}" } })
+{% endif %}
+
 # Disable bundled PostgreSQL — use shared instance
 postgresql['enable'] = false
 gitlab_rails['db_adapter'] = 'postgresql'

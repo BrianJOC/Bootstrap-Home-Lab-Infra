@@ -9,7 +9,7 @@ services:
       - "{{ technitium_port_dns }}:53/tcp"
       - "{{ technitium_port_http }}:5380"
     volumes:
-      - "{{ technitium_data_dir }}:/etc/dns"
+      - "{{ service_data_root + '/technitium' if service_data_root else '/opt/technitium/data' }}:/etc/dns"
     environment:
       - DNS_SERVER_DOMAIN={{ internal_domain }}
       - DNS_SERVER_ADMIN_PASSWORD={{ technitium_admin_password }}

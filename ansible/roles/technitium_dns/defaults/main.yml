@@ -2,6 +2,7 @@
 technitium_port_http: 5380
 technitium_port_dns: 53
 technitium_data_dir: /opt/technitium/data
+service_data_root: ""
 
 # DNS records to create — all point to bootstrap_server_ip
 technitium_dns_records:

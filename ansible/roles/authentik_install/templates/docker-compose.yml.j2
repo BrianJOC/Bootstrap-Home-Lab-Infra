@@ -20,8 +20,8 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
 {% endif %}
     volumes:
-      - "{{ authentik_data_dir }}/media:/media"
-      - "{{ authentik_data_dir }}/custom-templates:/templates"
+      - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/media:/media"
+      - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/custom-templates:/templates"
     ports:
       - "{{ authentik_port_http }}:9000"
       - "{{ authentik_port_https }}:9443"
@@ -56,8 +56,8 @@ services:
       # stricter environments replace with a docker-socket-proxy that whitelists only
       # the container lifecycle API calls Authentik requires.
       - /var/run/docker.sock:/var/run/docker.sock
-      - "{{ authentik_data_dir }}/media:/media"
-      - "{{ authentik_data_dir }}/custom-templates:/templates"
+      - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/media:/media"
+      - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/custom-templates:/templates"
     depends_on:
       - authentik-redis
 {% if authentik_use_bundled_postgres %}
@@ -82,7 +82,7 @@ services:
       retries: 5
       timeout: 5s
     volumes:
-      - "{{ authentik_data_dir }}/db:/var/lib/postgresql/data"
+      - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/db:/var/lib/postgresql/data"
     environment:
       POSTGRES_PASSWORD: ${PG_PASS}
       POSTGRES_USER: authentik

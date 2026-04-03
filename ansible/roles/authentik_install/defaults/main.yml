@@ -3,6 +3,7 @@ authentik_version: "2024.2.2"
 authentik_port_http: 9000
 authentik_port_https: 9443
 authentik_data_dir: /opt/authentik
+service_data_root: ""
 
 # When true: bundled PostgreSQL and Redis are included in compose (Stage 4 default)
 # Set to false by Go runner during Stage 5 migration to shared PostgreSQL
