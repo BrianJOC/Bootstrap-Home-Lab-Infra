@@ -11,9 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+<<<<<<< HEAD
 // internalDomainRE is a strict allowlist for internal_domain values.
 // Only lowercase labels with hyphens are allowed; no shell metacharacters.
 var internalDomainRE = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]*(\.[a-z0-9][a-z0-9\-]*)+$`)
+=======
+var validDataDiskRE = regexp.MustCompile(`^/dev/(sd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|vd[a-z]+)$`)
+>>>>>>> 040e51f (fix(config): improve validation ordering and move regex to package level)
 
 // Config holds all non-sensitive structural configuration from config.yaml.
 // No secrets. Safe to log field names (not values).
@@ -227,16 +231,17 @@ func Validate(rc *RunConfig) error {
 
 	// Validate data_disk if set.
 	if rc.DataDisk != "" {
-		validDataDisk := regexp.MustCompile(`^/dev/(sd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|vd[a-z]+)$`)
-		if !validDataDisk.MatchString(rc.DataDisk) {
+		if !validDataDiskRE.MatchString(rc.DataDisk) {
 			return fmt.Errorf("data_disk %q must be a block device path (/dev/sd*, /dev/nvme*, /dev/mmcblk*, /dev/vd*)", rc.DataDisk)
 		}
 	}
-	if rc.DataDiskMode != "" && rc.DataDisk == "" {
-		return fmt.Errorf("data_disk_mode requires data_disk to be set")
-	}
+	// Check mode value first (independent of whether disk is set).
 	if rc.DataDiskMode != "" && rc.DataDiskMode != "full" && rc.DataDiskMode != "mount_only" {
 		return fmt.Errorf("data_disk_mode must be \"full\" or \"mount_only\", got %q", rc.DataDiskMode)
+	}
+	// Then check that mode implies disk is set.
+	if rc.DataDiskMode != "" && rc.DataDisk == "" {
+		return fmt.Errorf("data_disk_mode requires data_disk to be set")
 	}
 
 	return nil
