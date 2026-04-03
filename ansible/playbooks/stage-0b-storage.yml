@@ -2,5 +2,8 @@
 - name: Storage setup
   hosts: all
   become: true
+  gather_facts: true
+  gather_subset:
+    - "services"
   roles:
     - role: storage_setup

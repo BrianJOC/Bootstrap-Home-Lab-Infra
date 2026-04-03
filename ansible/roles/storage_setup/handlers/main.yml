@@ -3,4 +3,4 @@
   ansible.builtin.service:
     name: docker
     state: restarted
-  when: ansible_facts.services['docker.service'] is defined
+  when: ansible_facts.services is defined and ansible_facts.services['docker.service'] is defined

@@ -9,6 +9,3 @@ data_disk_mode: "full"
 # data_disk_force_format: when true, wipe the disk even if a filesystem is
 # detected (other than LABEL=homelab-data).
 data_disk_force_format: false
-# service_data_root: derived from data_disk + data_disk_mode.
-# Set by the Go stage runner via extra-vars; do not override here.
-service_data_root: ""

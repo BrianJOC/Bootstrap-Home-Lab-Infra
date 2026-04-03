@@ -7,13 +7,27 @@
 # ── Pre-flight guard ─────────────────────────────────────────────────────────
 
 - name: Detect filesystem on data_disk
-  ansible.builtin.command: blkid -o value -s TYPE {{ data_disk }}
+  ansible.builtin.command:
+    argv:
+      - blkid
+      - -o
+      - value
+      - -s
+      - TYPE
+      - "{{ data_disk }}"
   register: blkid_type
   changed_when: false
   failed_when: false
 
 - name: Detect label on data_disk
-  ansible.builtin.command: blkid -o value -s LABEL {{ data_disk }}
+  ansible.builtin.command:
+    argv:
+      - blkid
+      - -o
+      - value
+      - -s
+      - LABEL
+      - "{{ data_disk }}"
   register: blkid_label
   changed_when: false
   failed_when: false
