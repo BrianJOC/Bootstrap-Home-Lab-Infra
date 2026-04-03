@@ -50,8 +50,12 @@
         - /data/technitium
         - /data/maas
 
-    - name: Assert all service directories exist
+    - name: Assert all service directories exist and are owned root:root
       ansible.builtin.assert:
-        that: item.stat.exists and item.stat.isdir
-        fail_msg: "Directory {{ item.item }} does not exist"
+        that:
+          - item.stat.exists
+          - item.stat.isdir
+          - item.stat.pw_name == 'root'
+          - item.stat.gr_name == 'root'
+        fail_msg: "Directory {{ item.item }} does not exist or is not owned root:root"
       loop: "{{ service_dirs.results }}"

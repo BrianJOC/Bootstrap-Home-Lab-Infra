@@ -8,10 +8,17 @@
         argv: [fallocate, -l, 100M, /tmp/test-disk.img]
         creates: /tmp/test-disk.img
 
-    - name: Set up loop device
+    - name: Check if loop device already attached
+      ansible.builtin.command:
+        argv: [losetup, -j, /tmp/test-disk.img]
+      register: losetup_existing
+      changed_when: false
+      failed_when: false
+
+    - name: Set up loop device (only if not already attached)
       ansible.builtin.command:
         argv: [losetup, -f, /tmp/test-disk.img]
-      register: losetup_result
+      when: losetup_existing.stdout | length == 0
 
     - name: Find the loop device path
       ansible.builtin.command:
@@ -21,7 +28,7 @@
 
     - name: Store loop device path as fact
       ansible.builtin.set_fact:
-        test_loop_device: "{{ (losetup_json.stdout | regex_search('/dev/loop[0-9]+')).split() | first }}"
+        test_loop_device: "{{ losetup_json.stdout | regex_search('/dev/loop[0-9]+') }}"
 
     - name: Write loop device path to file for converge step
       ansible.builtin.copy:
