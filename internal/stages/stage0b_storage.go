@@ -34,13 +34,21 @@ func (s *StorageSetupStage) Run(ctx context.Context, cfg *config.RunConfig, sink
 	}
 	defer client.Close()
 
+	// Normalize empty mode to "full" — Ansible defaults/main.yml also
+	// defaults to "full", but extra-vars override defaults; an empty string
+	// would reach the role and produce ambiguous behaviour.
+	mode := cfg.DataDiskMode
+	if mode == "" {
+		mode = "full"
+	}
+
 	runner := ansible.New(client, sink)
 	return runner.RunPlaybook(
 		"ansible/playbooks/stage-0b-storage.yml",
 		cfg.TargetHost+",",
 		map[string]string{
 			"data_disk":              cfg.DataDisk,
-			"data_disk_mode":         cfg.DataDiskMode,
+			"data_disk_mode":         mode,
 			"data_disk_force_format": fmt.Sprintf("%v", cfg.DataDiskForceFormat),
 			"service_data_root":      cfg.DataPath(),
 		},
