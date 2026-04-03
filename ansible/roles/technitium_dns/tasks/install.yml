@@ -58,7 +58,7 @@
 # Create Technitium data directory and compose file
 - name: Create Technitium data directory
   ansible.builtin.file:
-    path: "{{ technitium_data_dir }}"
+    path: "{{ (service_data_root + '/technitium') if service_data_root else technitium_data_dir }}"
     state: directory
     mode: "0755"
 

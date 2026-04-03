@@ -3,7 +3,7 @@
 
 external_url 'https://gitlab.{{ internal_domain }}'
 
-git_data_dirs({ "default" => { "path" => "{{ service_data_root + '/gitlab' if service_data_root else '/var/opt/gitlab/git-data' }}" } })
+git_data_dirs({ "default" => { "path" => "{{ (service_data_root + '/gitlab') if service_data_root else '/var/opt/gitlab/git-data' }}" } })
 
 # Disable bundled PostgreSQL — use shared instance
 postgresql['enable'] = false
