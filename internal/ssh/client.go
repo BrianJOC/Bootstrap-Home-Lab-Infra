@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -176,10 +177,18 @@ func (c *Client) FindBootPartition() (string, error) {
 	return strings.TrimSpace(stdout), nil
 }
 
+// validPartitionRE matches device partition paths produced by findmnt on Linux.
+// Accepts: /dev/sdXN, /dev/nvmeXnXpX, /dev/mmcblkXpX, /dev/vdXN
+var validPartitionRE = regexp.MustCompile(`^/dev/(sd[a-z]+[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+|mmcblk[0-9]+p[0-9]+|vd[a-z]+[0-9]+)$`)
+
 // FindParentDisk returns the parent disk name for a partition device.
-// e.g., "mmcblk0p1" -> "mmcblk0", "sda1" -> "sda"
-// Uses lsblk --pkname for architecture-agnostic detection.
+// e.g., "/dev/mmcblk0p1" -> "mmcblk0", "/dev/sda1" -> "sda"
+// Uses lsblk -no pkname for architecture-agnostic detection.
+// Returns an error if the partition path does not match a known device pattern.
 func (c *Client) FindParentDisk(partition string) (string, error) {
+	if !validPartitionRE.MatchString(partition) {
+		return "", fmt.Errorf("unrecognised partition path %q (not a standard block device)", partition)
+	}
 	stdout, _, err := c.Run(fmt.Sprintf("lsblk -no pkname %s", partition))
 	if err != nil {
 		return "", fmt.Errorf("finding parent disk for %s: %w", partition, err)
