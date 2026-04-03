@@ -1,0 +1,6 @@
+---
+- name: Storage setup
+  hosts: all
+  become: true
+  roles:
+    - role: storage_setup

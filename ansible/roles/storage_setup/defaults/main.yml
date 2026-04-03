@@ -1,0 +1,14 @@
+---
+# data_disk: block device path for secondary storage (e.g. /dev/sda).
+# Empty means no secondary disk — entire role is a no-op.
+data_disk: ""
+# data_disk_mode: "full" or "mount_only"
+# "full": redirect Docker root + service data to /data (default)
+# "mount_only": only format and mount; no service redirection
+data_disk_mode: "full"
+# data_disk_force_format: when true, wipe the disk even if a filesystem is
+# detected (other than LABEL=homelab-data).
+data_disk_force_format: false
+# service_data_root: derived from data_disk + data_disk_mode.
+# Set by the Go stage runner via extra-vars; do not override here.
+service_data_root: ""

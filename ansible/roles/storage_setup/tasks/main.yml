@@ -1,0 +1,102 @@
+---
+# No-op when no disk is configured.
+- name: Skip storage setup (no data_disk configured)
+  ansible.builtin.meta: end_play
+  when: data_disk | length == 0
+
+# ── Pre-flight guard ─────────────────────────────────────────────────────────
+
+- name: Detect filesystem on data_disk
+  ansible.builtin.command: blkid -o value -s TYPE {{ data_disk }}
+  register: blkid_type
+  changed_when: false
+  failed_when: false
+
+- name: Detect label on data_disk
+  ansible.builtin.command: blkid -o value -s LABEL {{ data_disk }}
+  register: blkid_label
+  changed_when: false
+  failed_when: false
+
+- name: Fail if disk has unrecognized filesystem and force_format is false
+  ansible.builtin.fail:
+    msg: >
+      Disk {{ data_disk }} has an existing filesystem
+      (TYPE={{ blkid_type.stdout | default('unknown') }},
+      LABEL={{ blkid_label.stdout | default('none') }}).
+      Set data_disk_force_format: true to wipe it.
+  when:
+    - blkid_type.stdout | length > 0
+    - blkid_label.stdout != 'homelab-data'
+    - not (data_disk_force_format | bool)
+
+# ── Format ───────────────────────────────────────────────────────────────────
+
+- name: Format data_disk as ext4 with label homelab-data
+  community.general.filesystem:
+    fstype: ext4
+    dev: "{{ data_disk }}"
+    opts: "-L homelab-data"
+    force: "{{ data_disk_force_format | bool }}"
+  when: blkid_label.stdout != 'homelab-data'
+
+# ── Mount ────────────────────────────────────────────────────────────────────
+
+- name: Create /data mount point
+  ansible.builtin.file:
+    path: /data
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Mount data_disk at /data (persistent via fstab)
+  ansible.posix.mount:
+    path: /data
+    src: LABEL=homelab-data
+    fstype: ext4
+    opts: defaults,noatime
+    state: mounted
+
+# ── Docker daemon.json (full mode only) ──────────────────────────────────────
+
+- name: Ensure /etc/docker directory exists
+  ansible.builtin.file:
+    path: /etc/docker
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+  when: data_disk_mode != 'mount_only'
+
+- name: Configure Docker data-root to /data/docker
+  ansible.builtin.copy:
+    dest: /etc/docker/daemon.json
+    content: |
+      {
+        "data-root": "/data/docker"
+      }
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart Docker
+  when: data_disk_mode != 'mount_only'
+
+# ── Service data directories (full mode only) ─────────────────────────────────
+
+- name: Create service data directories under /data
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+    owner: root
+    group: root
+  loop:
+    - { path: /data/docker,      mode: "0710" }
+    - { path: /data/postgresql,  mode: "0755" }
+    - { path: /data/vault,       mode: "0755" }
+    - { path: /data/authentik,   mode: "0755" }
+    - { path: /data/gitlab,      mode: "0755" }
+    - { path: /data/technitium,  mode: "0755" }
+    - { path: /data/maas,        mode: "0755" }
+  when: data_disk_mode != 'mount_only'
