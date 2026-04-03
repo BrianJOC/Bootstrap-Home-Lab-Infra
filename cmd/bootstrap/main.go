@@ -120,6 +120,7 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 func buildStages() []stage.Stage {
 	return []stage.Stage{
 		&stages.ConfigStage{},
+		&stages.StorageSetupStage{},
 		&stages.DNSStage{},
 		&stages.TLSStage{},
 		&stages.VaultStage{},

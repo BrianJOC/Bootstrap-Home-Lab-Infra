@@ -52,6 +52,7 @@ func (s *AuthentikStage) Run(_ context.Context, cfg *config.Config, sec *config.
 			"bootstrap_server_ip":      cfg.BootstrapServerIP,
 			"authentik_admin_password": sec.AdminPassword,
 			"admin_email":              cfg.AdminEmail,
+			"service_data_root":        cfg.DataPath(),
 		},
 	)
 }
