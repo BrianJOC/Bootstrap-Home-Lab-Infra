@@ -15,9 +15,19 @@
         state: absent
       ignore_errors: true
 
+    - name: Read loop device path from remote host
+      ansible.builtin.slurp:
+        src: /tmp/test-loop-device
+      register: loop_device_file
+      ignore_errors: true
+
     - name: Detach loop device
       ansible.builtin.command:
-        argv: [losetup, -d, "{{ lookup('file', '/tmp/test-loop-device') }}"]
+        argv:
+          - losetup
+          - -d
+          - "{{ loop_device_file['content'] | b64decode | trim }}"
+      when: loop_device_file is not failed and loop_device_file['content'] is defined
       ignore_errors: true
 
     - name: Remove backing file

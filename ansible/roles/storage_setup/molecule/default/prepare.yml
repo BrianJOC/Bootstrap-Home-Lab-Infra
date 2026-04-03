@@ -19,12 +19,14 @@
       ansible.builtin.command:
         argv: [losetup, -f, /tmp/test-disk.img]
       when: losetup_existing.stdout | length == 0
+      changed_when: losetup_existing.stdout | length == 0
 
     - name: Find the loop device path
       ansible.builtin.command:
         argv: [losetup, -j, /tmp/test-disk.img]
       register: losetup_json
       changed_when: false
+      failed_when: losetup_json.rc != 0 or losetup_json.stdout | length == 0
 
     - name: Store loop device path as fact
       ansible.builtin.set_fact:

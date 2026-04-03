@@ -3,59 +3,56 @@
   hosts: all
   become: true
   tasks:
-    - name: Read loop device path
-      ansible.builtin.slurp:
-        src: /tmp/test-loop-device
-      register: loop_device_file
-
-    - name: Set loop device variable
-      ansible.builtin.set_fact:
-        test_loop_device: "{{ loop_device_file['content'] | b64decode | trim }}"
-
     - name: Check /data is mounted
       ansible.builtin.command:
         argv: [mountpoint, -q, /data]
       changed_when: false
 
-    - name: Check fstab has homelab-data entry
-      ansible.builtin.command:
-        argv: [grep, -q, homelab-data, /etc/fstab]
-      changed_when: false
+    - name: Read /etc/fstab
+      ansible.builtin.slurp:
+        src: /etc/fstab
+      register: fstab_content
 
-    - name: Check /etc/docker/daemon.json exists
-      ansible.builtin.stat:
-        path: /etc/docker/daemon.json
-      register: daemon_json
-
-    - name: Assert daemon.json exists
+    - name: Assert fstab has homelab-data entry
       ansible.builtin.assert:
-        that: daemon_json.stat.exists
-        fail_msg: "/etc/docker/daemon.json was not created"
+        that: "'homelab-data' in (fstab_content['content'] | b64decode)"
+        fail_msg: "/etc/fstab does not contain a homelab-data entry"
 
-    - name: Check daemon.json contains /data/docker
-      ansible.builtin.command:
-        argv: [grep, -q, /data/docker, /etc/docker/daemon.json]
-      changed_when: false
+    - name: Read /etc/docker/daemon.json
+      ansible.builtin.slurp:
+        src: /etc/docker/daemon.json
+      register: daemon_json_content
+
+    - name: Assert daemon.json contains /data/docker
+      ansible.builtin.assert:
+        that: "'/data/docker' in (daemon_json_content['content'] | b64decode)"
+        fail_msg: "/etc/docker/daemon.json does not contain /data/docker"
 
     - name: Check service directories exist under /data
       ansible.builtin.stat:
-        path: "{{ item }}"
+        path: "{{ item.path }}"
       register: service_dirs
       loop:
-        - /data/docker
-        - /data/postgresql
-        - /data/vault
-        - /data/authentik
-        - /data/gitlab
-        - /data/technitium
-        - /data/maas
+        - { path: /data/docker,     mode: "0710" }
+        - { path: /data/postgresql, mode: "0755" }
+        - { path: /data/vault,      mode: "0755" }
+        - { path: /data/authentik,  mode: "0755" }
+        - { path: /data/gitlab,     mode: "0755" }
+        - { path: /data/technitium, mode: "0755" }
+        - { path: /data/maas,       mode: "0755" }
 
-    - name: Assert all service directories exist and are owned root:root
+    - name: Assert all service directories exist, are owned root:root, and have correct mode
       ansible.builtin.assert:
         that:
           - item.stat.exists
           - item.stat.isdir
           - item.stat.pw_name == 'root'
           - item.stat.gr_name == 'root'
-        fail_msg: "Directory {{ item.item }} does not exist or is not owned root:root"
+          - item.stat.mode == item.item.mode
+        fail_msg: >
+          Directory {{ item.item.path }} failed assertions:
+          exists={{ item.stat.exists }},
+          isdir={{ item.stat.isdir }},
+          owner={{ item.stat.pw_name }}:{{ item.stat.gr_name }},
+          mode={{ item.stat.mode }}
       loop: "{{ service_dirs.results }}"
