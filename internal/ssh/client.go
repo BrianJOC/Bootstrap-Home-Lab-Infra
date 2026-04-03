@@ -155,3 +155,34 @@ func (c *Client) DetectOS() (name, version string, err error) {
 	}
 	return nameOut, versionOut, nil
 }
+
+// ListBlockDevices runs lsblk on the remote host and returns JSON output.
+// Returns the raw JSON string from: lsblk -d -o NAME,SIZE,TYPE,TRAN -J
+func (c *Client) ListBlockDevices() (string, error) {
+	stdout, _, err := c.Run("lsblk -d -o NAME,SIZE,TYPE,TRAN -J")
+	if err != nil {
+		return "", fmt.Errorf("listing block devices: %w", err)
+	}
+	return stdout, nil
+}
+
+// FindBootPartition returns the device path of the root filesystem mount source.
+// Example: "/dev/mmcblk0p1" or "/dev/sda1"
+func (c *Client) FindBootPartition() (string, error) {
+	stdout, _, err := c.Run("findmnt / -o SOURCE -n")
+	if err != nil {
+		return "", fmt.Errorf("finding boot partition: %w", err)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// FindParentDisk returns the parent disk name for a partition device.
+// e.g., "mmcblk0p1" -> "mmcblk0", "sda1" -> "sda"
+// Uses lsblk --pkname for architecture-agnostic detection.
+func (c *Client) FindParentDisk(partition string) (string, error) {
+	stdout, _, err := c.Run(fmt.Sprintf("lsblk -no pkname %s", partition))
+	if err != nil {
+		return "", fmt.Errorf("finding parent disk for %s: %w", partition, err)
+	}
+	return strings.TrimSpace(stdout), nil
+}
