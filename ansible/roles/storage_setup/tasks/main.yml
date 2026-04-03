@@ -74,6 +74,10 @@
 
 # ── Docker daemon.json (full mode only) ──────────────────────────────────────
 
+- name: Gather service facts (needed for Docker restart handler)
+  ansible.builtin.service_facts:
+  when: data_disk_mode != 'mount_only'
+
 - name: Ensure /etc/docker directory exists
   ansible.builtin.file:
     path: /etc/docker
