@@ -1,0 +1,57 @@
+---
+- name: Verify storage setup (full mode)
+  hosts: all
+  become: true
+  tasks:
+    - name: Read loop device path
+      ansible.builtin.slurp:
+        src: /tmp/test-loop-device
+      register: loop_device_file
+
+    - name: Set loop device variable
+      ansible.builtin.set_fact:
+        test_loop_device: "{{ loop_device_file['content'] | b64decode | trim }}"
+
+    - name: Check /data is mounted
+      ansible.builtin.command:
+        argv: [mountpoint, -q, /data]
+      changed_when: false
+
+    - name: Check fstab has homelab-data entry
+      ansible.builtin.command:
+        argv: [grep, -q, homelab-data, /etc/fstab]
+      changed_when: false
+
+    - name: Check /etc/docker/daemon.json exists
+      ansible.builtin.stat:
+        path: /etc/docker/daemon.json
+      register: daemon_json
+
+    - name: Assert daemon.json exists
+      ansible.builtin.assert:
+        that: daemon_json.stat.exists
+        fail_msg: "/etc/docker/daemon.json was not created"
+
+    - name: Check daemon.json contains /data/docker
+      ansible.builtin.command:
+        argv: [grep, -q, /data/docker, /etc/docker/daemon.json]
+      changed_when: false
+
+    - name: Check service directories exist under /data
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: service_dirs
+      loop:
+        - /data/docker
+        - /data/postgresql
+        - /data/vault
+        - /data/authentik
+        - /data/gitlab
+        - /data/technitium
+        - /data/maas
+
+    - name: Assert all service directories exist
+      ansible.builtin.assert:
+        that: item.stat.exists and item.stat.isdir
+        fail_msg: "Directory {{ item.item }} does not exist"
+      loop: "{{ service_dirs.results }}"

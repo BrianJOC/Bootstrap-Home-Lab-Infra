@@ -1,0 +1,30 @@
+---
+- name: Prepare loop device for storage tests
+  hosts: all
+  become: true
+  tasks:
+    - name: Create backing file for loop device
+      ansible.builtin.command:
+        argv: [fallocate, -l, 100M, /tmp/test-disk.img]
+        creates: /tmp/test-disk.img
+
+    - name: Set up loop device
+      ansible.builtin.command:
+        argv: [losetup, -f, /tmp/test-disk.img]
+      register: losetup_result
+
+    - name: Find the loop device path
+      ansible.builtin.command:
+        argv: [losetup, -j, /tmp/test-disk.img]
+      register: losetup_json
+      changed_when: false
+
+    - name: Store loop device path as fact
+      ansible.builtin.set_fact:
+        test_loop_device: "{{ (losetup_json.stdout | regex_search('/dev/loop[0-9]+')).split() | first }}"
+
+    - name: Write loop device path to file for converge step
+      ansible.builtin.copy:
+        dest: /tmp/test-loop-device
+        content: "{{ test_loop_device }}"
+        mode: "0644"

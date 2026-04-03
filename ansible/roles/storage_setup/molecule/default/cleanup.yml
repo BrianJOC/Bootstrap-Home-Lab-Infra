@@ -1,0 +1,31 @@
+---
+- name: Cleanup loop device
+  hosts: all
+  become: true
+  tasks:
+    - name: Unmount /data if mounted
+      ansible.posix.mount:
+        path: /data
+        state: unmounted
+      ignore_errors: true
+
+    - name: Remove fstab entry
+      ansible.posix.mount:
+        path: /data
+        state: absent
+      ignore_errors: true
+
+    - name: Detach loop device
+      ansible.builtin.command:
+        argv: [losetup, -d, "{{ lookup('file', '/tmp/test-loop-device') }}"]
+      ignore_errors: true
+
+    - name: Remove backing file
+      ansible.builtin.file:
+        path: /tmp/test-disk.img
+        state: absent
+
+    - name: Remove device path file
+      ansible.builtin.file:
+        path: /tmp/test-loop-device
+        state: absent

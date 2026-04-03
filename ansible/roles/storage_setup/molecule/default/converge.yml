@@ -1,0 +1,19 @@
+---
+- name: Converge
+  hosts: all
+  become: true
+  pre_tasks:
+    - name: Read loop device path
+      ansible.builtin.slurp:
+        src: /tmp/test-loop-device
+      register: loop_device_file
+
+    - name: Set loop device variable
+      ansible.builtin.set_fact:
+        test_loop_device: "{{ loop_device_file['content'] | b64decode | trim }}"
+
+  roles:
+    - role: storage_setup
+      vars:
+        data_disk: "{{ test_loop_device }}"
+        data_disk_mode: "full"
