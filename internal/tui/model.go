@@ -49,21 +49,21 @@ type WarningBoxMsg struct {
 	Lines []string
 }
 
-// Model is the root Bubbletea model for the bootstrap TUI.
-type Model struct {
-	stages    []StageStatus
-	logView   viewport.Model
-	input     textinput.Model
-	promptMsg string
-	verifyMsg string
+// progressModel is the Bubbletea model for the bootstrap progress screen.
+type progressModel struct {
+	stages       []StageStatus
+	logView      viewport.Model
+	input        textinput.Model
+	promptMsg    string
+	verifyMsg    string
 	warningLines []string
-	mode      string // "progress", "prompt", "verify", "warning"
-	logPath   string
-	width     int
-	height    int
-	err       error
-	errMsg    string
-	logLines  []string
+	mode         string // "progress", "prompt", "verify", "warning"
+	logPath      string
+	width        int
+	height       int
+	err          error
+	errMsg       string
+	logLines     []string
 
 	// Channels for synchronization with the runner goroutine.
 	promptResponse chan string
@@ -72,13 +72,16 @@ type Model struct {
 	verifyErrChan  chan error
 }
 
-// New creates a new TUI Model with the given stages and log path.
-func New(stages []StageStatus, logPath string) Model {
+// newProgressModel creates a new progressModel with the given stages and log path.
+func newProgressModel(stages []StageStatus, logPath string) *progressModel {
+	if stages == nil {
+		stages = []StageStatus{}
+	}
 	vp := viewport.New(80, 20)
 	ti := textinput.New()
 	ti.CharLimit = 512
 
-	return Model{
+	return &progressModel{
 		stages:  stages,
 		logView: vp,
 		input:   ti,
@@ -88,12 +91,12 @@ func New(stages []StageStatus, logPath string) Model {
 }
 
 // Init initializes the model.
-func (m Model) Init() tea.Cmd {
+func (m *progressModel) Init() tea.Cmd {
 	return nil
 }
 
 // Update handles incoming messages and updates the model state.
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
@@ -156,18 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		logWidth := (m.width * 70 / 100) - 4
-		if logWidth < 20 {
-			logWidth = 20
-		}
-		logHeight := m.height - 6
-		if logHeight < 5 {
-			logHeight = 5
-		}
-		m.logView.Width = logWidth
-		m.logView.Height = logHeight
+		m.setSize(msg.Width, msg.Height)
 
 	case LogMsg:
 		line := fmt.Sprintf("[%s] %s: %s", strings.ToUpper(msg.Level), msg.Stage, msg.Text)
@@ -222,7 +214,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View renders the TUI.
-func (m Model) View() string {
+func (m *progressModel) View() string {
 	if m.width == 0 {
 		return "Initializing bootstrap..."
 	}
@@ -274,4 +266,31 @@ func (m Model) View() string {
 		return header + "\n" + mainArea + "\n" + bottom
 	}
 	return header + "\n" + mainArea
+}
+
+// screen interface implementation.
+
+func (m *progressModel) init() tea.Cmd { return nil }
+
+func (m *progressModel) update(msg tea.Msg) (screen, tea.Cmd) {
+	// Discard the tea.Model return (always m); only need cmd.
+	_, cmd := m.Update(msg)
+	return m, cmd
+}
+
+func (m *progressModel) view() string { return m.View() }
+
+func (m *progressModel) setSize(w, h int) {
+	m.width = w
+	m.height = h
+	logWidth := (w * 70 / 100) - 4
+	if logWidth < 20 {
+		logWidth = 20
+	}
+	logHeight := h - 6
+	if logHeight < 5 {
+		logHeight = 5
+	}
+	m.logView.Width = logWidth
+	m.logView.Height = logHeight
 }
