@@ -37,6 +37,15 @@ func WriteConfigYAML(path string, cfg *Config) error {
 
 // WriteEnvFile writes secrets to path atomically (mode 0600).
 func WriteEnvFile(path string, sec *Secrets) error {
+	// Validate secrets before writing
+	for name, val := range map[string]string{
+		"CF_DNS_API_TOKEN":         sec.CloudflareAPIToken,
+		"BOOTSTRAP_ADMIN_PASSWORD": sec.AdminPassword,
+	} {
+		if strings.ContainsAny(val, "\n\r") {
+			return fmt.Errorf("secret %q contains newline characters", name)
+		}
+	}
 	content := fmt.Sprintf("CF_DNS_API_TOKEN=%s\nBOOTSTRAP_ADMIN_PASSWORD=%s\n",
 		sec.CloudflareAPIToken, sec.AdminPassword)
 	return atomicWrite(path, content)

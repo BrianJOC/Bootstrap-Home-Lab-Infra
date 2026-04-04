@@ -122,3 +122,15 @@ func TestWriteEnvFile_PermissionDenied(t *testing.T) {
 		t.Error("expected error for read-only dir, got nil")
 	}
 }
+
+func TestWriteEnvFile_NewlineInSecret(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	sec := &config.Secrets{
+		CloudflareAPIToken: "tok\nnewline",
+		AdminPassword:      "pass",
+	}
+	if err := config.WriteEnvFile(path, sec); err == nil {
+		t.Error("expected error for secret containing newline, got nil")
+	}
+}
