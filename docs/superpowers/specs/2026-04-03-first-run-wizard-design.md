@@ -511,19 +511,248 @@ This function is unit-tested independently of the TUI with no `tea.Program` requ
 
 ## Testing
 
-Unit tests for `wizardModel` and `AppModel` internal screen transitions live in
-`package tui` (not `package tui_test`) to access the unexported `screen` interface and
-`wizardModel` directly. `AppModel.Update` is called directly on the struct value — no
-`tea.NewProgram` required for these unit tests.
+Run all tests: `go test ./...`
+Run a specific package: `go test ./internal/config/...` or `go test ./internal/tui/...`
 
-| Layer | What to test | Approach |
-|-------|-------------|----------|
-| `selectInitialScreen` | no config / complete config / `--wizard` flag | pure unit test, `package tui` or `package main` |
-| `wizardModel` | field advance, back navigation, validation error, `EchoModePassword`, preamble→fields | call `update()` directly, `package tui` |
-| `AppModel` screen transitions | wizard→progress (`startStagesMsg`), `fatalMsg` display | call `AppModel.Update()` directly, `package tui` |
-| `config.FromWizardResult` | all field mappings, `bootstrap_server_ip` all 3 derivation cases | pure unit test, `package config` |
-| `bootstrap_server_ip` derivation | bare IP, IP+port, resolvable hostname, unresolvable hostname | pure unit test |
-| SSH key detection | standard path present, absent, custom path | unit test with `t.TempDir()` |
-| `WriteConfigYAML` | successful write, mode 0600, atomic rename, write failure | unit test with `t.TempDir()` |
-| `WriteEnvFile` | successful write, mode 0600, atomic rename, write failure | unit test with `t.TempDir()` |
-| `fatalMsg` rendering | send `fatalMsg{err}` to `AppModel`, verify `View()` contains error text | `package tui` unit test |
+Unit tests for `wizardModel` and `AppModel` live in `package tui` (not `package tui_test`)
+to access unexported types. All other tests are black-box (`package foo_test`).
+No `tea.NewProgram` is needed for any unit test — call `Update()` / `View()` directly.
+
+---
+
+### `cmd/bootstrap/main_test.go` — `package main`
+
+**`TestSelectInitialScreen`** — table-driven:
+
+```go
+tests := []struct {
+    name       string
+    rc         *config.RunConfig  // fields set or empty
+    wizardFlag bool
+    want       initialMode
+}{
+    {"no config fields, no flag",    emptyRC(),    false, initialModeWizard},
+    {"complete config, no flag",     completeRC(), false, initialModePreamble},
+    {"complete config, wizard flag", completeRC(), true,  initialModeWizard},
+    {"incomplete config, no flag",   partialRC(),  false, initialModeWizard},
+    {"empty config, wizard flag",    emptyRC(),    true,  initialModeWizard},
+}
+```
+
+Pass: returned `initialMode` matches `want`. No TUI started.
+
+---
+
+### `internal/config/wizard_test.go` — `package config_test`
+
+**`TestFromWizardResult`** — table-driven, one row per field mapping:
+
+```go
+// Minimal valid WizardResult for a non-hostname target (field 6 pre-set by wizardModel)
+base := config.WizardResult{
+    Values: map[string]string{
+        "target_host":        "192.168.1.50",
+        "ssh_user":           "ubuntu",
+        "ssh_key_path":       "/home/user/.ssh/id_ed25519",
+        "internal_domain":    "home.lab",
+        "cloudflare_zone_id": "abc123",
+        "bootstrap_server_ip": "192.168.1.50",
+        "lab_vlan_subnet":    "10.0.0.0/24",
+        "admin_email":        "admin@example.com",
+    },
+    Secrets: map[string]string{
+        "CF_DNS_API_TOKEN":          "tok-abc",
+        "BOOTSTRAP_ADMIN_PASSWORD":  "hunter2",
+    },
+}
+rc, err := config.FromWizardResult(base)
+// assert: err == nil
+// assert: rc.TargetHost == "192.168.1.50"
+// assert: rc.BootstrapServerIP == "192.168.1.50"
+// assert: rc.SSHUser == "ubuntu"
+// ... one assertion per field
+// assert: rc.CloudflareAPIToken == "tok-abc"
+// assert: rc.AdminPassword == "hunter2"
+```
+
+**`TestFromWizardResult_MissingField`**: omit one required key at a time; assert `err != nil`.
+
+---
+
+### `internal/config/bootstrap_ip_test.go` — `package config_test`
+
+**`TestDeriveBootstrapServerIP`** — table-driven (covers the decision tree in full):
+
+```go
+tests := []struct {
+    targetHost string
+    wantIP     string   // empty = expect prompt (not derived silently)
+    wantSkip   bool     // true = field 6 skipped, IP set silently
+}{
+    {"192.168.1.100",       "192.168.1.100", true},   // bare IPv4 → silent
+    {"192.168.1.100:22",    "192.168.1.100", true},   // IP+port → strip port, silent
+    {"192.168.1.100:2222",  "192.168.1.100", true},   // IP+non-standard port → silent
+    {"localhost",           "127.0.0.1",     false},  // resolvable hostname → pre-fill, show
+    {"doesnotexist.invalid","",              false},  // unresolvable → empty, show warning
+}
+```
+
+Pass: `wantSkip` matches whether field 6 was skipped; `wantIP` matches the derived value
+(empty string means the field was shown with no pre-fill).
+
+---
+
+### `internal/config/write_test.go` — `package config_test`
+
+**`TestWriteConfigYAML`**:
+```go
+dir := t.TempDir()
+cfg := completeConfig()
+err := config.WriteConfigYAMLTo(dir+"/config.yaml", cfg)
+// assert: err == nil
+fi, _ := os.Stat(dir + "/config.yaml")
+// assert: fi.Mode().Perm() == 0600
+data, _ := os.ReadFile(dir + "/config.yaml")
+// assert: strings.Contains(string(data), `target_host: "192.168.1.100"`)
+// assert: no temp file left in dir (atomic write completed)
+```
+
+**`TestWriteConfigYAML_PermissionDenied`**: pass a read-only directory; assert `err != nil`.
+
+**`TestWriteEnvFile`** — same structure: write, check mode 0600, check contents
+(`CF_DNS_API_TOKEN=...`, `BOOTSTRAP_ADMIN_PASSWORD=...`), no temp file left.
+
+**`TestWriteEnvFile_PermissionDenied`**: read-only dir; assert `err != nil`.
+
+Note: `WriteConfigYAML` and `WriteEnvFile` must accept an explicit path parameter
+(not hardcoded `"config.yaml"`) to be testable with `t.TempDir()`. The production
+call site in `main.go` passes `flagConfig` and `flagEnv` as the paths.
+
+---
+
+### `internal/tui/wizard_test.go` — `package tui`
+
+**`TestWizardModel_FieldAdvance`**:
+```go
+m := newWizardModel(initialModeWizard, emptyPreload())
+// Simulate typing a value and pressing Enter for field 1
+m2, _ := m.update(typeText("192.168.1.100"))
+m3, _ := m2.update(pressEnter())
+// assert: m3.cursor == 1  (advanced to field 2)
+// assert: m3.values["target_host"] == "192.168.1.100"
+```
+
+**`TestWizardModel_BackNavigation`**:
+```go
+// Advance to field 2, then press Esc
+m := advanceTo(2)
+m2, _ := m.update(pressEsc())
+// assert: m2.cursor == 1  (back to field 1... wait, 0-indexed: back to field 0)
+// assert: m2.values["ssh_user"] preserved from prior entry
+```
+
+**`TestWizardModel_ValidationError`**:
+```go
+m := advanceTo(0)  // target_host field
+m2, _ := m.update(typeText("not-valid!!"))
+m3, _ := m2.update(pressEnter())
+// assert: m3.cursor == 0  (did not advance)
+// assert: m3.errMsg != ""
+```
+
+**`TestWizardModel_PasswordMasked`**:
+```go
+m := advanceTo(8)  // CF_DNS_API_TOKEN field (0-indexed: 8)
+// assert: m.input.EchoMode == textinput.EchoPassword
+```
+
+**`TestWizardModel_PasswordConfirmMismatch`**:
+```go
+m := advanceTo(9)  // BOOTSTRAP_ADMIN_PASSWORD
+m2, _ := m.update(typeText("password1"))
+m3, _ := m2.update(pressEnter())  // submit first entry → confirm sub-step appears
+m4, _ := m3.update(typeText("password2"))
+m5, _ := m4.update(pressEnter())  // submit confirm → mismatch
+// assert: m5.errMsg contains "do not match"
+// assert: both password inputs cleared (m5.input.Value() == "")
+// assert: m5.cursor still on field 9 (password field, not advanced)
+```
+
+**`TestWizardModel_PreambleAccept`**:
+```go
+m := newWizardModel(initialModePreamble, completePreload())
+// assert: m.state == "preamble"
+_, cmd := m.update(pressEnter())
+// execute cmd and capture message
+msg := cmd()
+// assert: msg is a tea.Cmd that sends WizardResult{Noop: true} (or assert on resultCh)
+```
+
+**`TestWizardModel_PreambleReject`**:
+```go
+m := newWizardModel(initialModePreamble, completePreload())
+m2, _ := m.update(typeKey("n"))
+// assert: m2.state == "fields"
+// assert: m2.cursor == 0
+// assert: m2.values["target_host"] == completePreload().Values["target_host"]
+```
+
+---
+
+### `internal/tui/app_test.go` — `package tui`
+
+**`TestAppModel_WizardToProgress`**:
+```go
+resultCh := make(chan config.WizardResult, 1)
+app := NewApp(initialModeWizard, emptyRC(), resultCh)
+app, _ = app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+// Send startStagesMsg (simulating main.go goroutine after receiving WizardResult)
+app2, _ := app.Update(startStagesMsg{rc: completeRC()})
+// assert: app2.current is a *progressModel (not *wizardModel)
+```
+
+**`TestAppModel_FatalMsg`**:
+```go
+app := NewApp(initialModeWizard, emptyRC(), make(chan config.WizardResult, 1))
+app, _ = app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+app2, cmd := app.Update(fatalMsg{errors.New("disk write failed")})
+// assert: app2.View() contains "disk write failed"
+// assert: cmd == tea.Quit (or executing cmd produces tea.QuitMsg)
+```
+
+**`TestAppModel_ScreenSwapCallsInit`**:
+```go
+// Confirm that when current.update returns a different screen,
+// AppModel calls init() on the new screen and batches cmds.
+// Use a test double for screen that records init() calls.
+```
+
+---
+
+### `internal/tui/sshkey_test.go` — `package tui`
+
+**`TestDetectSSHKey`**:
+```go
+dir := t.TempDir()
+// Case 1: id_ed25519 present
+os.WriteFile(dir+"/id_ed25519", []byte("fake key"), 0600)
+got := detectSSHKey(dir)
+// assert: got == dir+"/id_ed25519"
+
+// Case 2: only id_rsa present
+got2 := detectSSHKey(dir + "/empty")
+// assert: got2 == ""  (not found)
+```
+
+---
+
+### Regression: Headless mode unaffected
+
+**`TestHeadlessStillWorks`** (in `internal/stages/stage0_config_test.go`):
+
+Verify that `ConfigStage.Run` no longer calls `WriteEnvFile`. After the refactor, run
+`ConfigStage` against a mock sink with a complete `RunConfig` and assert:
+- `WriteEnvFile` is NOT called (use a spy or check `.env` is not written)
+- `WriteConfigYAML` IS called after the disk picker
+
+This protects against reintroducing secret writes in headless mode.
