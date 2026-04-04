@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -26,6 +27,11 @@ func DeriveBootstrapServerIP(targetHost string) (ip string, skip bool) {
 	addrs, err := net.LookupHost(host)
 	if err != nil || len(addrs) == 0 {
 		return "", false
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.To4() != nil {
+			return a, false
+		}
 	}
 	return addrs[0], false
 }
@@ -84,14 +90,22 @@ func FromWizardResult(r WizardResult) (*RunConfig, error) {
 		VaultThreshold:    3,
 	}
 	if v := r.Values["lab_vlan_id"]; v != "" {
-		fmt.Sscanf(v, "%d", &cfg.LabVLANID)
+		id, err := strconv.Atoi(strings.TrimSpace(v))
+		if err != nil {
+			return nil, fmt.Errorf("lab_vlan_id %q is not a valid integer: %w", v, err)
+		}
+		cfg.LabVLANID = id
 	}
 
-	return &RunConfig{
+	rc := &RunConfig{
 		Config: cfg,
 		Secrets: &Secrets{
 			CloudflareAPIToken: cfToken,
 			AdminPassword:      adminPass,
 		},
-	}, nil
+	}
+	if err := Validate(rc); err != nil {
+		return nil, fmt.Errorf("wizard result failed validation: %w", err)
+	}
+	return rc, nil
 }

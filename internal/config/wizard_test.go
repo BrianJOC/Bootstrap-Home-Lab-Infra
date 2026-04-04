@@ -82,4 +82,12 @@ func TestFromWizardResult_MissingField(t *testing.T) {
 			}
 		})
 	}
+	t.Run("whitespace_target_host", func(t *testing.T) {
+		r := baseWizardResult()
+		r.Values["target_host"] = "   "
+		_, err := config.FromWizardResult(r)
+		if err == nil {
+			t.Error("expected error for whitespace-only target_host")
+		}
+	})
 }
