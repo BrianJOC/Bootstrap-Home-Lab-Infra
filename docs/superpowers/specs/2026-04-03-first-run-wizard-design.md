@@ -401,7 +401,7 @@ config, returns `self` (no screen swap).
 ## Data Flow
 
 ```
-WizardResult (exported from internal/tui):
+WizardResult (defined in internal/config):
     Values  map[string]string   // structural config field values by yaml key
     Secrets map[string]string   // "CF_DNS_API_TOKEN", "BOOTSTRAP_ADMIN_PASSWORD"
     Noop    bool                // true = existing config accepted, skip file writes
