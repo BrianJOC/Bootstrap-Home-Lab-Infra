@@ -388,7 +388,7 @@ func validateIP(s string) error {
 		return fmt.Errorf("this field is required")
 	}
 	if net.ParseIP(strings.TrimSpace(s)) == nil {
-		return fmt.Errorf("%q is not a valid IP address", s)
+		return fmt.Errorf("%q is not a valid IP address", strings.TrimSpace(s))
 	}
 	return nil
 }
@@ -398,7 +398,7 @@ func validateCIDR(s string) error {
 		return fmt.Errorf("this field is required")
 	}
 	if _, _, err := net.ParseCIDR(strings.TrimSpace(s)); err != nil {
-		return fmt.Errorf("%q is not a valid CIDR (e.g. 10.0.0.0/24)", s)
+		return fmt.Errorf("%q is not a valid CIDR (e.g. 10.0.0.0/24)", strings.TrimSpace(s))
 	}
 	return nil
 }

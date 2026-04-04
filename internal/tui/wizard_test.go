@@ -33,7 +33,7 @@ func advanceTo(idx int, resultCh chan config.WizardResult) *wizardModel {
 	m := newWizardModel(InitialModeWizard, emptyPreload(), resultCh)
 	m.setSize(80, 24)
 
-	// One valid value per displayed field (field 5 is skipped for bare IPv4).
+	// One valid value per displayed field (field 7 / bootstrapIPFieldIdx is skipped for bare IPv4).
 	// indices 0..8 correspond to fields 0,1,2,3,4, 6,7,8,9 (5 is skipped).
 	validValues := []string{
 		"192.168.1.100",  // 0: target_host (bare IP → skip field 5)
@@ -204,6 +204,25 @@ func TestWizardModel_PasswordConfirmMismatch(t *testing.T) {
 	// Cursor should not advance.
 	if m3.cursor != m.cursor {
 		t.Errorf("cursor advanced from %d to %d after mismatch", m.cursor, m3.cursor)
+	}
+}
+
+func TestWizardModel_BackNavigation_SkipsBootstrapIP(t *testing.T) {
+	resultCh := make(chan config.WizardResult, 1)
+	// advanceTo(8) fills fields 0–7 (skipping bootstrapIPFieldIdx=7 auto),
+	// leaving cursor at 8 (CF_DNS_API_TOKEN).
+	m := advanceTo(8, resultCh)
+	if m.fields[m.cursor].key != "CF_DNS_API_TOKEN" {
+		t.Fatalf("setup: cursor %d = %q, want CF_DNS_API_TOKEN", m.cursor, m.fields[m.cursor].key)
+	}
+	next, _ := m.update(pressEsc())
+	m2 := next.(*wizardModel)
+	// Should land on admin_email (index 6), skipping bootstrap_server_ip (index 7).
+	if m2.cursor != 6 {
+		t.Errorf("after esc from CF_DNS_API_TOKEN: cursor = %d, want 6 (admin_email)", m2.cursor)
+	}
+	if m2.fields[m2.cursor].key != "admin_email" {
+		t.Errorf("cursor %d = %q, want admin_email", m2.cursor, m2.fields[m2.cursor].key)
 	}
 }
 
