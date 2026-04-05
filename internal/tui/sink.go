@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"fmt"
-
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
@@ -18,33 +16,36 @@ func NewTUISink(program *tea.Program) *TUISink {
 	return &TUISink{program: program}
 }
 
-// Info sends an INFO log message to the TUI.
-func (s *TUISink) Info(stageName, msg string) {
-	s.program.Send(LogMsg{Level: "info", Stage: stageName, Text: msg})
+// StageStarted sends a stage state update to the TUI (state: "running").
+func (s *TUISink) StageStarted(name string) {
+	s.program.Send(StageUpdateMsg{Name: name, State: "running"})
 }
 
-// Warn sends a WARN log message to the TUI.
-func (s *TUISink) Warn(stageName, msg string) {
-	s.program.Send(LogMsg{Level: "warn", Stage: stageName, Text: msg})
+// StageComplete sends a stage state update to the TUI (state: "done").
+func (s *TUISink) StageComplete(name string) {
+	s.program.Send(StageUpdateMsg{Name: name, State: "done"})
 }
 
-// Error sends an ERROR log message to the TUI.
-func (s *TUISink) Error(stageName, msg string, err error) {
-	text := msg
-	if err != nil {
-		text = msg + ": " + err.Error()
-	}
-	s.program.Send(LogMsg{Level: "error", Stage: stageName, Text: text})
+// StageFailed sends a stage state update to the TUI (state: "failed").
+func (s *TUISink) StageFailed(name, errMsg, logPath string, logLine int) {
+	s.program.Send(StageUpdateMsg{Name: name, State: "failed"})
+	s.program.Send(LogMsg{Level: "error", Stage: name, Text: errMsg})
+}
+
+// Log sends a leveled log message to the TUI.
+func (s *TUISink) Log(level, stageName, msg string, fields map[string]string) {
+	s.program.Send(LogMsg{Level: level, Stage: stageName, Text: msg})
 }
 
 // Prompt pauses the runner, updates the model to prompt mode, and waits for input.
-func (s *TUISink) Prompt(stageName, question string) (string, error) {
+// If masked is true, input is hidden (password mode).
+func (s *TUISink) Prompt(label string, masked bool) (string, error) {
 	responseChan := make(chan string, 1)
 	errChan := make(chan error, 1)
 
 	s.program.Send(PromptMsg{
-		Stage:    stageName,
-		Question: question,
+		Label:    label,
+		Masked:   masked,
 		Response: responseChan,
 		ErrChan:  errChan,
 	})
@@ -57,14 +58,13 @@ func (s *TUISink) Prompt(stageName, question string) (string, error) {
 	}
 }
 
-// Verify pauses the runner, updates the model to verify mode, and waits for a yes/no answer.
-func (s *TUISink) Verify(stageName, message string) (bool, error) {
+// Confirm pauses the runner, updates the model to confirm mode, and waits for a yes/no answer.
+func (s *TUISink) Confirm(msg string) (bool, error) {
 	responseChan := make(chan bool, 1)
 	errChan := make(chan error, 1)
 
-	s.program.Send(VerifyMsg{
-		Stage:    stageName,
-		Message:  message,
+	s.program.Send(ConfirmMsg{
+		Message:  msg,
 		Response: responseChan,
 		ErrChan:  errChan,
 	})
@@ -77,11 +77,6 @@ func (s *TUISink) Verify(stageName, message string) (bool, error) {
 	}
 }
 
-// UpdateStage sends a stage state update to the TUI.
-func (s *TUISink) UpdateStage(name, state string) {
-	s.program.Send(StageUpdateMsg{Name: name, State: state})
-}
-
 // ShowWarningBox displays a warning box with the given lines.
 func (s *TUISink) ShowWarningBox(lines []string) {
 	s.program.Send(WarningBoxMsg{Lines: lines})
@@ -90,14 +85,6 @@ func (s *TUISink) ShowWarningBox(lines []string) {
 // Quit signals the TUI to quit.
 func (s *TUISink) Quit() {
 	s.program.Send(tea.Quit())
-}
-
-// FormatError returns a formatted error string for display.
-func FormatError(stageName, msg string, err error) string {
-	if err != nil {
-		return fmt.Sprintf("[%s] %s: %v", stageName, msg, err)
-	}
-	return fmt.Sprintf("[%s] %s", stageName, msg)
 }
 
 // Ensure TUISink implements stage.Sink.

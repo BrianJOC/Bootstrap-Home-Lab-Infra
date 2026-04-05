@@ -6,24 +6,24 @@
   changed_when: false
   failed_when: false
 
-- name: Download GitLab Runner install script
-  ansible.builtin.get_url:
-    url: "https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh"
-    dest: /tmp/gitlab-runner-setup.sh
-    mode: "0755"
-  when: runner_version_check.rc != 0
-
-- name: Run GitLab Runner repo setup
-  ansible.builtin.command: bash /tmp/gitlab-runner-setup.sh
-  args:
-    creates: /etc/apt/sources.list.d/runner_gitlab-runner.list
+# packages.gitlab.com signing key is shared between gitlab-ce and gitlab-runner repos;
+# the get_url task in install.yml already placed it at /usr/share/keyrings/gitlab.gpg.
+- name: Add GitLab Runner apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/gitlab.gpg]
+      https://packages.gitlab.com/runner/gitlab-runner/ubuntu/
+      {{ ansible_distribution_release }} main
+    state: present
+    filename: gitlab-runner
+    update_cache: true
   when: runner_version_check.rc != 0
 
 - name: Install GitLab Runner package
   ansible.builtin.apt:
     name: gitlab-runner
     state: present
-    update_cache: true
+    update_cache: false
   when: runner_version_check.rc != 0
 
 - name: Ensure gitlab-runner service is started and enabled
@@ -39,7 +39,9 @@
   changed_when: false
   failed_when: false
 
-- name: Get GitLab Runner registration token
+# GET omits no_log — response contains only non-sensitive runner metadata;
+# no_log on registered uri results empties .json and breaks selectattr idempotency checks.
+- name: Get existing GitLab Runner registrations
   ansible.builtin.uri:
     url: "https://localhost/api/v4/runners/all"
     method: GET
@@ -48,7 +50,6 @@
     validate_certs: false
     status_code: [200]
   register: existing_runners
-  no_log: true
   when: gitlab_api_token is defined
 
 - name: Create GitLab Runner registration token
@@ -88,6 +89,7 @@
   when:
     - runner_token_response is defined
     - runner_token_response.json is defined
-    - "'bootstrap-runner' not in runner_list_check.stdout"
+    # gitlab-runner list writes to stderr, not stdout
+    - "'bootstrap-runner' not in (runner_list_check.stdout + runner_list_check.stderr)"
   no_log: true
   notify: restart gitlab-runner

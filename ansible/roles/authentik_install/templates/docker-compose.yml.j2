@@ -51,6 +51,10 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
 {% endif %}
     volumes:
+      # Docker socket required for Authentik embedded outpost management. This grants
+      # the worker container root-equivalent host access. Acceptable for homelab; for
+      # stricter environments replace with a docker-socket-proxy that whitelists only
+      # the container lifecycle API calls Authentik requires.
       - /var/run/docker.sock:/var/run/docker.sock
       - "{{ authentik_data_dir }}/media:/media"
       - "{{ authentik_data_dir }}/custom-templates:/templates"
@@ -61,7 +65,7 @@ services:
 {% endif %}
 
   authentik-redis:
-    image: redis:alpine
+    image: redis:7-alpine
     container_name: authentik-redis
     restart: unless-stopped
     command: --save 60 1 --loglevel warning

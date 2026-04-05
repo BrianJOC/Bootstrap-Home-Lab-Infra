@@ -7,28 +7,39 @@
       - ca-certificates
       - tzdata
       - perl
+      - gnupg
     state: present
     update_cache: true
 
-- name: Download GitLab CE setup script
+# Fetch the packages.gitlab.com signing key with checksum pinning — detects CDN compromise or MITM.
+# Both gitlab-ce and gitlab-runner repos share this key (verified: same SHA256).
+- name: Download packages.gitlab.com signing key
   ansible.builtin.get_url:
-    url: "https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh"
-    dest: /tmp/gitlab-setup.sh
-    mode: "0755"
+    url: https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey
+    dest: /usr/share/keyrings/gitlab.gpg
+    checksum: "sha256:003c0ca2fea61767f8c6de7a1c0f49fc88ea3c8db95e3cd1856b32ce9d876e0f"
+    mode: "0644"
 
-- name: Run GitLab CE apt repo setup
-  ansible.builtin.command: bash /tmp/gitlab-setup.sh
-  args:
-    creates: /etc/apt/sources.list.d/gitlab_gitlab-ce.list
+- name: Add GitLab CE apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/gitlab.gpg]
+      https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu/
+      {{ ansible_distribution_release }} main
+    state: present
+    filename: gitlab-ce
+    update_cache: true
 
+# GITLAB_ROOT_PASSWORD is consumed once by the omnibus post-install hook and not persisted.
+# Treat gitlab_admin_password as a one-time seed credential — rotate via API after bootstrap.
 - name: Install GitLab CE package
   ansible.builtin.apt:
     name: "{{ gitlab_version }}"
     state: present
-    update_cache: true
+    update_cache: false
   environment:
     EXTERNAL_URL: "https://gitlab.{{ internal_domain }}"
-    GITLAB_ROOT_PASSWORD: "{{ gitlab_root_password }}"
+    GITLAB_ROOT_PASSWORD: "{{ gitlab_admin_password }}"
   no_log: true
 
 # Template gitlab.rb before first reconfigure
@@ -41,6 +52,9 @@
     mode: "0600"
   no_log: true
 
+# NOTE: GITLAB_DB_PASSWORD and GITLAB_OIDC_SECRET must be set here because gitlab.rb
+# reads them via ENV[]. Running gitlab-ctl reconfigure manually without this playbook
+# will fail. This is an expected omnibus bootstrap constraint.
 - name: Run gitlab-ctl reconfigure
   ansible.builtin.command: gitlab-ctl reconfigure
   environment:
@@ -48,3 +62,5 @@
     GITLAB_OIDC_SECRET: "{{ gitlab_oidc_secret | default('') }}"
   no_log: true
   register: gitlab_reconfigure_result
+  changed_when: "'gitlab Reconfigured!' in gitlab_reconfigure_result.stdout"
+  failed_when: gitlab_reconfigure_result.rc != 0

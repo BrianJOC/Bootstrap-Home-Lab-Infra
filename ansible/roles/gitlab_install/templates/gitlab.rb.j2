@@ -12,9 +12,9 @@ gitlab_rails['db_database'] = 'gitlab'
 gitlab_rails['db_username'] = 'gitlab'
 gitlab_rails['db_password'] = ENV['GITLAB_DB_PASSWORD']
 
-# TLS configuration
-nginx['ssl_certificate'] = "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.crt"
-nginx['ssl_certificate_key'] = "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.key"
+# TLS configuration — wildcard cert from Stage 2 (lego stores as _.domain.crt)
+nginx['ssl_certificate'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.crt"
+nginx['ssl_certificate_key'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.key"
 
 # Authentik OIDC SSO
 gitlab_rails['omniauth_enabled'] = true
@@ -33,7 +33,7 @@ gitlab_rails['omniauth_providers'] = [
       response_type: 'code',
       issuer: 'https://authentik.{{ internal_domain }}/application/o/gitlab/',
       discovery: true,
-      client_auth_method: 'query',
+      client_auth_method: 'client_secret_post',
       uid_field: 'sub',
       send_scope_to_token_endpoint: 'false',
       pkce: true,

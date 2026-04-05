@@ -1,0 +1,11 @@
+target_host: "localhost:2222"
+ssh_user: "ansible"
+ssh_key_path: "/Users/brian/src/bootstrap-home-infra/test/keys/test_id_ed25519"
+internal_domain: "lab.test"
+cloudflare_zone_id: "test-zone-id-placeholder"
+bootstrap_server_ip: "127.0.0.1"
+lab_vlan_subnet: "10.99.0.0/24"
+lab_vlan_id: 99
+admin_email: "test@lab.test"
+vault_shares: 3
+vault_threshold: 2

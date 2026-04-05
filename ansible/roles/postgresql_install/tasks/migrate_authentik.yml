@@ -3,6 +3,15 @@
 # Run with: --tags migrate
 # This task file is NOT included from main.yml — it is invoked explicitly by the Go runner.
 
+- name: Assert required migration variables are defined
+  ansible.builtin.assert:
+    that:
+      - authentik_data_dir is defined and authentik_data_dir != ""
+      - authentik_port_http is defined
+      - authentik_db_password is defined and authentik_db_password != ""
+    fail_msg: "Migration requires authentik_data_dir, authentik_port_http, and authentik_db_password to be set"
+  tags: migrate
+
 - name: Stop Authentik containers for migration
   community.docker.docker_compose_v2:
     project_src: "{{ authentik_data_dir }}"
@@ -30,14 +39,6 @@
     /tmp/authentik-dump.dump
   tags: migrate
 
-- name: Restore Authentik database dump to shared PostgreSQL
-  community.postgresql.postgresql_query:
-    db: authentik
-    query: "SELECT 1"
-  become_user: postgres
-  register: pg_restore_precheck
-  tags: migrate
-
 - name: Restore dump to shared PostgreSQL
   ansible.builtin.command: >
     pg_restore -h {{ bootstrap_server_ip }} -U authentik -d authentik
@@ -45,6 +46,21 @@
   environment:
     PGPASSWORD: "{{ authentik_db_password }}"
   register: pg_restore_result
+  no_log: true
+  tags: migrate
+
+# Verify the restore succeeded by confirming core Authentik schema tables exist.
+# A silent empty-restore (e.g. from corrupt dump) would pass pg_restore exit code 0
+# but leave Authentik regenerating its schema on first boot, losing all configuration.
+- name: Verify restore — assert django_content_type table populated
+  community.postgresql.postgresql_query:
+    db: authentik
+    login_host: "{{ bootstrap_server_ip }}"
+    login_user: authentik
+    login_password: "{{ authentik_db_password }}"
+    query: "SELECT COUNT(*) AS ct FROM django_content_type"
+  register: restore_verify
+  failed_when: restore_verify.query_result[0].ct | int == 0
   no_log: true
   tags: migrate
 

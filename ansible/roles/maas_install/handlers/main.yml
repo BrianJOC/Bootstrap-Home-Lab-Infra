@@ -1,4 +1,4 @@
 ---
+# Triggered by: notify: restart maas
 - name: restart maas
   ansible.builtin.command: snap restart maas
-  listen: restart maas

@@ -31,3 +31,15 @@
           - vault_health.status in [200, 429, 472, 473, 501, 503]
         fail_msg: "Vault API on port 8200 did not respond (status: {{ vault_health.status }})"
         success_msg: "Vault API is responding on port 8200 (status: {{ vault_health.status }})"
+
+    # 200 = initialized + unsealed. The role's init+unseal shell task must leave
+    # Vault active after converge. 503 (sealed) or 501 (uninitialized) indicate failure.
+    - name: Assert Vault is initialized and unsealed
+      ansible.builtin.assert:
+        that:
+          - vault_health.status == 200
+        fail_msg: >
+          Vault is not unsealed after converge (HTTP {{ vault_health.status }}).
+          Check that /tmp/vault-init-molecule.json was written and the
+          init+unseal shell task completed successfully.
+        success_msg: "Vault is initialized and unsealed (HTTP 200)"

@@ -7,3 +7,17 @@ authentik_data_dir: /opt/authentik
 # When true: bundled PostgreSQL and Redis are included in compose (Stage 4 default)
 # Set to false by Go runner during Stage 5 migration to shared PostgreSQL
 authentik_use_bundled_postgres: true
+
+# Auto-generated secrets — persisted on the controller at ~/.bootstrap/ on first run.
+# lookup('password', path) creates the file with a random value if missing; reads it on
+# subsequent runs. Override in Molecule tests with fixed values.
+authentik_secret_key: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/authentik-secret-key')
+     + ' length=50 chars=ascii_letters,digits') }}
+authentik_pg_password: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/authentik-pg-password')
+     + ' length=32 chars=ascii_letters,digits') }}
+
+# Bootstrap token — if set, used by configure.yml to wire OIDC providers via API.
+# Authentik creates a service account with this token on first run when set in .env.
+authentik_bootstrap_token: ""

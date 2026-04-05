@@ -1,7 +1,23 @@
 ---
+# Pin to a specific version for reproducible installs, e.g. "gitlab-ce=17.9.0-ce.0"
+# Unpinned "gitlab-ce" installs latest — update deliberately when upgrading.
 gitlab_version: "gitlab-ce"
 gitlab_port_http: 80
 gitlab_port_https: 443
 gitlab_config_dir: /etc/gitlab
 gitlab_health_timeout: 600
 gitlab_health_interval: 15
+
+# Path where Stage 2 (TLS) stored the wildcard cert and key.
+gitlab_cert_dir: /opt/certs
+
+# Auto-generated GitLab DB password — persisted on controller at ~/.bootstrap/.
+# Must match pg-gitlab-password used by postgresql_install role.
+gitlab_db_password: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/pg-gitlab-password')
+     + ' length=32 chars=ascii_letters,digits') }}
+
+# OIDC client secret for Authentik integration — set once OIDC provider is wired.
+# Leave empty to skip OIDC configuration in gitlab.rb.
+gitlab_oidc_client_id: "gitlab"
+gitlab_oidc_secret: ""

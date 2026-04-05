@@ -1,4 +1,11 @@
 ---
+# Build the PostgreSQL DSN for MAAS from the shared DB password.
+# Uses the same ~/.bootstrap/pg-maas-password written by postgresql_install.
+- name: Set MAAS database URI fact
+  ansible.builtin.set_fact:
+    maas_db_uri: "postgresql://maas:{{ maas_db_password }}@{{ bootstrap_server_ip }}/maas"
+  no_log: true
+
 # Check if MAAS is already initialized
 - name: Check MAAS initialization status
   ansible.builtin.command: maas status
@@ -16,10 +23,10 @@
     maas init region+rack
     --database-uri "{{ maas_db_uri }}"
     --maas-url "http://{{ bootstrap_server_ip }}:{{ maas_port }}/MAAS"
-  environment:
-    MAAS_DB_URI: "{{ maas_db_uri }}"
   when: not maas_initialized
   no_log: true
+  failed_when: maas_init_result.rc != 0
+  register: maas_init_result
 
 # Create MAAS admin user
 - name: Check if MAAS admin user exists
@@ -28,6 +35,9 @@
   changed_when: false
   failed_when: false
 
+# NOTE: MAAS createadmin has no stdin/env password input — --password is the only supported
+# option, so the password briefly appears in /proc/<pid>/cmdline. no_log: true suppresses
+# Ansible output. Mitigated by the short-lived process window on a single-user bootstrap host.
 - name: Create MAAS admin user
   ansible.builtin.command: >
     maas createadmin
@@ -45,11 +55,11 @@
     status_code: [200]
     validate_certs: false
   register: maas_api_check
-  retries: 60
-  delay: 5
+  retries: "{{ (maas_health_timeout / maas_health_interval) | int }}"
+  delay: "{{ maas_health_interval }}"
   until: maas_api_check.status == 200
 
-# Get MAAS API key for subsequent API calls
+# Get MAAS API key for subsequent CLI calls
 - name: Get MAAS API key for admin user
   ansible.builtin.command: "maas apikey --username={{ maas_admin_user }}"
   register: maas_api_key_result
@@ -61,40 +71,43 @@
     maas_api_key: "{{ maas_api_key_result.stdout | trim }}"
   no_log: true
 
-# Login to MAAS API
+# Login to MAAS CLI (writes ~/.maas.d profile used by subsequent maas commands)
 - name: Log into MAAS CLI
   ansible.builtin.command: >
     maas login {{ maas_admin_user }}
     http://localhost:{{ maas_port }}/MAAS/api/2.0/
     {{ maas_api_key }}
   no_log: true
-  changed_when: false
+  changed_when: true
 
-# Configure upstream DNS to use Technitium
+# Configure upstream DNS to use Technitium.
+# MAAS CLI set-config always returns "Success." regardless of whether the value changed —
+# no way to detect idempotency from exit code or output, so changed_when: true is accurate.
 - name: Configure MAAS upstream DNS to use Technitium
   ansible.builtin.command: >
     maas {{ maas_admin_user }} maas set-config
     name=upstream_dns value={{ bootstrap_server_ip }}
   register: maas_dns_config
-  changed_when: "'upstream_dns' in maas_dns_config.stdout"
+  changed_when: true
 
-# Configure MAAS domain
-- name: Configure MAAS domain
+# Configure MAAS name
+- name: Configure MAAS domain name
   ansible.builtin.command: >
     maas {{ maas_admin_user }} maas set-config
     name=maas_name value=maas.{{ internal_domain }}
   register: maas_domain_config
   changed_when: true
 
-# Import Ubuntu OS images in background (async, do not wait)
+# Import Ubuntu OS images — fire and forget (async: 3600, poll: 0).
+# The import runs in the background; MAAS will serve images once the sync completes.
 - name: Import Ubuntu OS images (background operation)
   ansible.builtin.command: >
     maas {{ maas_admin_user }} boot-resources import
-  async: 0
+  async: 3600
   poll: 0
   changed_when: true
   register: image_import_job
 
 - name: Log image import started
   ansible.builtin.debug:
-    msg: "MAAS: importing OS images in background — may take several minutes. Job ID: {{ image_import_job.ansible_job_id | default('started') }}"
+    msg: "MAAS: importing OS images in background — may take several minutes."

@@ -8,12 +8,25 @@
     state: present
     update_cache: true
 
-- name: Add PostgreSQL apt signing key
-  ansible.builtin.shell: |
-    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | \
-    gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
-  args:
+# Fetch and dearmor the PGDG signing key. SHA256 checksum of the armored .asc
+# file pins the key to the known PGDG release — detects CDN compromise or MITM.
+- name: Fetch PostgreSQL apt signing key (armored)
+  ansible.builtin.get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /tmp/postgresql-pgdg.asc
+    checksum: "sha256:0144068502a1eddd2a0280ede10ef607d1ec592ce819940991203941564e8e76"
+    mode: "0644"
+  register: pgdg_key_download
+
+- name: Dearmor PostgreSQL apt signing key
+  ansible.builtin.command:
+    cmd: gpg --dearmor -o /usr/share/keyrings/postgresql.gpg /tmp/postgresql-pgdg.asc
     creates: /usr/share/keyrings/postgresql.gpg
+
+- name: Remove temporary armored key file
+  ansible.builtin.file:
+    path: /tmp/postgresql-pgdg.asc
+    state: absent
 
 - name: Add PostgreSQL apt repository (pgdg)
   ansible.builtin.apt_repository:

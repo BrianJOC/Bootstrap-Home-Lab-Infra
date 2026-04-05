@@ -8,3 +8,15 @@ postgresql_databases:
     user: gitlab
   - name: maas
     user: maas
+
+# Per-service database passwords — auto-generated and persisted on the controller.
+# Override in Molecule tests with fixed values.
+authentik_db_password: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/pg-authentik-password')
+     + ' length=32 chars=ascii_letters,digits') }}
+gitlab_db_password: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/pg-gitlab-password')
+     + ' length=32 chars=ascii_letters,digits') }}
+maas_db_password: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/pg-maas-password')
+     + ' length=32 chars=ascii_letters,digits') }}

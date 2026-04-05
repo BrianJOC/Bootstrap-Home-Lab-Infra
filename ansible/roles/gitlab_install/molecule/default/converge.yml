@@ -7,6 +7,6 @@
       vars:
         internal_domain: home.test
         bootstrap_server_ip: "127.0.0.1"
-        admin_password: "TestPassword123!"
-        gitlab_external_url: "https://gitlab.home.test"
-        # role-specific test vars
+        gitlab_admin_password: "TestPassword123!"
+        gitlab_db_password: "TestDbPassword123!"
+        gitlab_oidc_secret: ""

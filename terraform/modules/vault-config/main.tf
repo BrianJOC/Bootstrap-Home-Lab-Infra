@@ -24,11 +24,11 @@ resource "vault_mount" "kv" {
 }
 
 resource "vault_mount" "pki" {
-  path                  = "pki"
-  type                  = "pki"
-  description           = "PKI secrets engine"
-  default_lease_ttl_seconds = 86400
-  max_lease_ttl_seconds     = 87600 * 365
+  path                      = "pki"
+  type                      = "pki"
+  description               = "PKI secrets engine"
+  default_lease_ttl_seconds = 86400           # 24 hours
+  max_lease_ttl_seconds     = 365 * 24 * 3600 # 1 year
 }
 
 # ── Policies ──────────────────────────────────────────────────────────────────
@@ -57,11 +57,15 @@ resource "vault_jwt_auth_backend" "oidc" {
   }
 }
 
-# JWT auth method — used by GitLab CI pipelines for Vault secret injection
+# JWT auth method — used by GitLab CI pipelines for Vault secret injection.
+# GitLab publishes its JWKS at /-/jwks; Vault uses this to validate CI token signatures.
 resource "vault_jwt_auth_backend" "gitlab_jwt" {
   path        = "jwt"
   type        = "jwt"
   description = "JWT auth for GitLab CI pipeline secret injection"
+
+  jwks_url      = "https://gitlab.${var.internal_domain}/-/jwks"
+  bound_issuer  = "https://gitlab.${var.internal_domain}"
 
   tune {
     listing_visibility = "hidden"

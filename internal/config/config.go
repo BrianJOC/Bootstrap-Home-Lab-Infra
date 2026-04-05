@@ -4,11 +4,16 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 )
+
+// internalDomainRE is a strict allowlist for internal_domain values.
+// Only lowercase labels with hyphens are allowed; no shell metacharacters.
+var internalDomainRE = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]*(\.[a-z0-9][a-z0-9\-]*)+$`)
 
 // Config holds all non-sensitive structural configuration from config.yaml.
 // No secrets. Safe to log field names (not values).
@@ -22,10 +27,16 @@ type Config struct {
 	LabVLANSubnet     string `yaml:"lab_vlan_subnet"`
 	LabVLANID         int    `yaml:"lab_vlan_id"`
 	AdminEmail        string `yaml:"admin_email"`
-	VaultShares       int    `yaml:"vault_shares"`
-	VaultThreshold    int    `yaml:"vault_threshold"`
+	VaultShares          int    `yaml:"vault_shares"`
+	VaultThreshold       int    `yaml:"vault_threshold"`
+	// Path on the controller where vault-init.json (Shamir shares + root token) is written.
+	// Must be outside the repository tree. Validated in Validate().
+	VaultInitOutputPath  string `yaml:"vault_init_output_path"`
 	// Populated from ACME_SERVER_URL env var; default: https://acme-v02.api.letsencrypt.org/directory
 	ACMEServerURL string `yaml:"-"`
+	// Populated from ACME_CA_CERT_URL env var; URL to download a PEM CA cert to trust for
+	// the ACME server (needed for test ACME servers like Pebble that use self-signed certs).
+	ACMECACertURL string `yaml:"-"`
 	// Populated from CLOUDFLARE_API_BASE_URL env var; default: https://api.cloudflare.com
 	CloudflareAPIBaseURL string `yaml:"-"`
 }
@@ -119,6 +130,7 @@ func Load(configPath, envPath string) (*RunConfig, error) {
 
 	// Populate env-sourced fields with defaults.
 	cfg.ACMEServerURL = envWithDefault("ACME_SERVER_URL", "https://acme-v02.api.letsencrypt.org/directory")
+	cfg.ACMECACertURL = os.Getenv("ACME_CA_CERT_URL")
 	cfg.CloudflareAPIBaseURL = envWithDefault("CLOUDFLARE_API_BASE_URL", "https://api.cloudflare.com")
 
 	// Reflect secrets from environment.
@@ -140,15 +152,16 @@ func Validate(rc *RunConfig) error {
 	var missing []string
 
 	required := map[string]string{
-		"target_host":         rc.TargetHost,
-		"ssh_user":            rc.SSHUser,
-		"ssh_key_path":        rc.SSHKeyPath,
-		"internal_domain":     rc.InternalDomain,
-		"cloudflare_zone_id":  rc.CloudflareZoneID,
-		"bootstrap_server_ip": rc.BootstrapServerIP,
-		"lab_vlan_subnet":     rc.LabVLANSubnet,
-		"admin_email":         rc.AdminEmail,
-		"CF_DNS_API_TOKEN":    rc.Secrets.CloudflareAPIToken,
+		"target_host":              rc.TargetHost,
+		"ssh_user":                 rc.SSHUser,
+		"ssh_key_path":             rc.SSHKeyPath,
+		"internal_domain":          rc.InternalDomain,
+		"cloudflare_zone_id":       rc.CloudflareZoneID,
+		"bootstrap_server_ip":      rc.BootstrapServerIP,
+		"lab_vlan_subnet":          rc.LabVLANSubnet,
+		"admin_email":              rc.AdminEmail,
+		"vault_init_output_path":   rc.VaultInitOutputPath,
+		"CF_DNS_API_TOKEN":         rc.Secrets.CloudflareAPIToken,
 		"BOOTSTRAP_ADMIN_PASSWORD": rc.Secrets.AdminPassword,
 	}
 
@@ -160,6 +173,12 @@ func Validate(rc *RunConfig) error {
 
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missing, ", "))
+	}
+
+	// Validate internal_domain against a strict hostname allowlist to prevent
+	// shell metacharacter injection in SSH commands and Ansible tasks.
+	if !internalDomainRE.MatchString(rc.InternalDomain) {
+		return fmt.Errorf("internal_domain %q is not a valid hostname (must match [a-z0-9-] labels)", rc.InternalDomain)
 	}
 
 	// Validate IP addresses.

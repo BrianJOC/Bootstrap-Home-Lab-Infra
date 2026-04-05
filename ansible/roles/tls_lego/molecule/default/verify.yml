@@ -5,7 +5,7 @@
   tasks:
     - name: Check cert directory exists
       ansible.builtin.stat:
-        path: /opt/certs/home.test
+        path: /opt/certs/certificates
       register: cert_dir
 
     - name: Assert cert directory exists
@@ -13,28 +13,43 @@
         that:
           - cert_dir.stat.exists
           - cert_dir.stat.isdir
-        fail_msg: "Cert directory /opt/certs/home.test does not exist"
+        fail_msg: "Cert directory /opt/certs/certificates does not exist"
 
-    - name: Check fullchain.pem exists
+    - name: Check certificate file exists
       ansible.builtin.stat:
-        path: /opt/certs/home.test/fullchain.pem
-      register: fullchain
+        path: /opt/certs/certificates/_.home.test.crt
+      register: cert_file
 
-    - name: Assert fullchain.pem exists
+    - name: Assert certificate file exists and is non-empty
       ansible.builtin.assert:
         that:
-          - fullchain.stat.exists
-          - fullchain.stat.size > 0
-        fail_msg: "/opt/certs/home.test/fullchain.pem does not exist or is empty"
+          - cert_file.stat.exists
+          - cert_file.stat.size > 0
+        fail_msg: "/opt/certs/certificates/_.home.test.crt does not exist or is empty"
 
-    - name: Check privkey.pem exists
+    - name: Check private key file exists
       ansible.builtin.stat:
-        path: /opt/certs/home.test/privkey.pem
-      register: privkey
+        path: /opt/certs/certificates/_.home.test.key
+      register: key_file
 
-    - name: Assert privkey.pem exists
+    - name: Assert private key file exists, is non-empty, and has restricted permissions
       ansible.builtin.assert:
         that:
-          - privkey.stat.exists
-          - privkey.stat.size > 0
-        fail_msg: "/opt/certs/home.test/privkey.pem does not exist or is empty"
+          - key_file.stat.exists
+          - key_file.stat.size > 0
+          - key_file.stat.mode == '0600'
+        fail_msg: "/opt/certs/certificates/_.home.test.key does not exist, is empty, or has wrong permissions"
+
+    - name: Assert certificate is valid
+      ansible.builtin.command: >
+        openssl x509 -in /opt/certs/certificates/_.home.test.crt -noout -text
+      register: cert_text
+      changed_when: false
+      failed_when: cert_text.rc != 0
+
+    - name: Assert certificate subject matches domain
+      ansible.builtin.assert:
+        that:
+          - "'*.home.test' in cert_text.stdout or 'home.test' in cert_text.stdout"
+        fail_msg: "Certificate subject does not match *.home.test"
+        success_msg: "Certificate subject OK"

@@ -1,27 +1,55 @@
 ---
+# Ensure the secret-persistence directory exists on the controller with restricted
+# permissions before any lookup('password', ...) expansion runs.
+- name: Ensure controller secret directory exists with restricted permissions
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.bootstrap"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
+- name: Check if Authentik is already initialized
+  ansible.builtin.stat:
+    path: "{{ authentik_data_dir }}/.initialized"
+  register: authentik_initialized_marker
+
+- name: Set authentik_db_initialized fact
+  ansible.builtin.set_fact:
+    authentik_db_initialized: "{{ authentik_initialized_marker.stat.exists }}"
+
 - name: Create Authentik data directory
   ansible.builtin.file:
     path: "{{ authentik_data_dir }}"
     state: directory
-    mode: "0755"
+    mode: "0750"
 
+# Authentik container runs as uid 1000; media and custom-templates must be
+# owned by 1000:1000 so the container can write subdirectories on first boot.
 - name: Create Authentik media directory
   ansible.builtin.file:
     path: "{{ authentik_data_dir }}/media"
     state: directory
     mode: "0755"
+    owner: "1000"
+    group: "1000"
 
 - name: Create Authentik custom-templates directory
   ansible.builtin.file:
     path: "{{ authentik_data_dir }}/custom-templates"
     state: directory
     mode: "0755"
+    owner: "1000"
+    group: "1000"
 
 - name: Template Authentik Docker Compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ authentik_data_dir }}/docker-compose.yml"
-    mode: "0644"
+    mode: "0640"
   notify: restart authentik
 
 - name: Template Authentik .env file
@@ -36,4 +64,3 @@
   community.docker.docker_compose_v2:
     project_src: "{{ authentik_data_dir }}"
     state: present
-  no_log: true

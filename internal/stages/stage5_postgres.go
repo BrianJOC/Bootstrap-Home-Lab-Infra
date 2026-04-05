@@ -2,10 +2,12 @@ package stages
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 )
@@ -17,7 +19,7 @@ type PostgreSQLStage struct{}
 func (s *PostgreSQLStage) Name() string { return "postgres" }
 
 // Check verifies PostgreSQL is running and accepting connections.
-func (s *PostgreSQLStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, error) {
+func (s *PostgreSQLStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return false, err
@@ -28,13 +30,13 @@ func (s *PostgreSQLStage) Check(ctx context.Context, cfg *config.RunConfig) (boo
 		`systemctl is-active postgresql 2>/dev/null && pg_isready -h localhost -p 5432 2>/dev/null && echo running || echo not-running`,
 	)
 	if err != nil {
-		return false, nil
+		return false, fmt.Errorf("checking postgresql status on target: %w", err)
 	}
 	return strings.TrimSpace(stdout) == "running", nil
 }
 
 // Run deploys PostgreSQL and migrates Authentik via Ansible.
-func (s *PostgreSQLStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.Sink) error {
+func (s *PostgreSQLStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return err
@@ -48,7 +50,7 @@ func (s *PostgreSQLStage) Run(ctx context.Context, cfg *config.RunConfig, sink s
 		map[string]string{
 			"internal_domain":     cfg.InternalDomain,
 			"bootstrap_server_ip": cfg.BootstrapServerIP,
-			"pg_admin_password":   cfg.Secrets.AdminPassword,
+			"pg_admin_password":   sec.AdminPassword,
 		},
 	)
 }

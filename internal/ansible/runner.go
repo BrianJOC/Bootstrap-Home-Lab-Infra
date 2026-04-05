@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -25,7 +26,7 @@ func New(client *ssh.Client, sink stage.Sink) *Runner {
 }
 
 // RunPlaybook runs an ansible-playbook command with the given playbook path,
-// inventory, and extra vars. Extra var values are never logged.
+// inventory host:port, and extra vars. Extra var values are never logged.
 func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[string]string) error {
 	// Build the --extra-vars JSON. Values are never logged; only keys are.
 	extraVarsJSON, err := buildExtraVarsJSON(extraVars)
@@ -38,16 +39,41 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 	for k := range extraVars {
 		keys = append(keys, k)
 	}
-	r.sink.Info("ansible", fmt.Sprintf("running playbook %s with vars: %s", playbookPath, strings.Join(keys, ", ")))
+	r.sink.Log("info", "ansible", fmt.Sprintf("running playbook %s with vars: %s", playbookPath, strings.Join(keys, ", ")), nil)
+
+	// Write a temp INI inventory so the [bootstrap_target] group is defined.
+	invFile, err := buildInventoryFile(strings.TrimSuffix(inventory, ","))
+	if err != nil {
+		return fmt.Errorf("building inventory: %w", err)
+	}
+	defer os.Remove(invFile)
+
+	// Write extra-vars to a temp file (mode 0600) to keep secret values off the
+	// process command line (which is visible in /proc/<pid>/cmdline).
+	evFile, err := os.CreateTemp("", "bootstrap-extravars-*.json")
+	if err != nil {
+		return fmt.Errorf("creating extra-vars temp file: %w", err)
+	}
+	evPath := evFile.Name()
+	defer os.Remove(evPath)
+	if err := os.Chmod(evPath, 0600); err != nil {
+		evFile.Close()
+		return fmt.Errorf("restricting extra-vars file permissions: %w", err)
+	}
+	if _, err := evFile.WriteString(extraVarsJSON); err != nil {
+		evFile.Close()
+		return fmt.Errorf("writing extra-vars file: %w", err)
+	}
+	evFile.Close()
 
 	args := []string{
 		playbookPath,
-		"-i", inventory,
-		"--extra-vars", extraVarsJSON,
+		"-i", invFile,
+		"--extra-vars", "@" + evPath,
 	}
 
 	cmd := exec.Command("ansible-playbook", args...) //nolint:gosec
-	cmd.Env = os.Environ()
+	cmd.Env = safeEnv()
 
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
@@ -66,7 +92,7 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 	go func() {
 		scanner := bufio.NewScanner(stdoutPipe)
 		for scanner.Scan() {
-			r.sink.Info("ansible", scanner.Text())
+			r.sink.Log("info", "ansible", scanner.Text(), nil)
 		}
 	}()
 
@@ -74,7 +100,7 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 	go func() {
 		scanner := bufio.NewScanner(stderrPipe)
 		for scanner.Scan() {
-			r.sink.Warn("ansible", scanner.Text())
+			r.sink.Log("warn", "ansible", scanner.Text(), nil)
 		}
 	}()
 
@@ -86,6 +112,62 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 	}
 
 	return nil
+}
+
+// secretEnvKeys is the set of bootstrap secret env vars that must never be
+// forwarded to ansible-playbook processes. Secrets are passed explicitly via
+// --extra-vars JSON, never via the process environment.
+// IMPORTANT: Any new secret added to config.Secrets that may be present in
+// the process environment must also be listed here to prevent leakage.
+var secretEnvKeys = map[string]struct{}{
+	"CF_DNS_API_TOKEN":          {},
+	"CLOUDFLARE_DNS_API_TOKEN":  {},
+	"BOOTSTRAP_ADMIN_PASSWORD":  {},
+}
+
+// safeEnv returns os.Environ() with all known bootstrap secret keys removed.
+func safeEnv() []string {
+	raw := os.Environ()
+	filtered := make([]string, 0, len(raw))
+	for _, kv := range raw {
+		key := kv
+		if idx := strings.Index(kv, "="); idx >= 0 {
+			key = kv[:idx]
+		}
+		if _, blocked := secretEnvKeys[key]; !blocked {
+			filtered = append(filtered, kv)
+		}
+	}
+	return filtered
+}
+
+// buildInventoryFile writes a temporary INI inventory file that defines the
+// [bootstrap_target] group expected by all stage playbooks. The hostPort
+// argument is "host:port" or bare "host" (port defaults to 22).
+// The caller must remove the returned file when done.
+func buildInventoryFile(hostPort string) (string, error) {
+	host, port, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		host = hostPort
+		port = "22"
+	}
+	content := fmt.Sprintf("[bootstrap_target]\n%s ansible_port=%s\n", host, port)
+	f, err := os.CreateTemp("", "bootstrap-inventory-*.ini")
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(f.Name(), 0600); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		os.Remove(f.Name())
+		return "", err
+	}
+	f.Close()
+	return f.Name(), nil
 }
 
 // buildExtraVarsJSON marshals extra vars into a JSON string for --extra-vars.

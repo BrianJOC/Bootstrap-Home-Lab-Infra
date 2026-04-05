@@ -54,8 +54,12 @@ func main() {
 			respond(w, 200, map[string]string{"id": "fake-record-id-67890"})
 		case r.Method == "DELETE" && strings.Contains(r.URL.Path, "/dns_records"):
 			respond(w, 200, map[string]string{"id": "fake-record-id-67890"})
-		default:
+		// httpreq DNS provider endpoints (lego --dns=httpreq)
+		case r.Method == "POST" && (r.URL.Path == "/present" || r.URL.Path == "/cleanup"):
 			respond(w, 200, map[string]string{})
+		default:
+			log.Printf("UNEXPECTED request: %s %s — returning 404", r.Method, r.URL.Path)
+			respond(w, 404, nil)
 		}
 	})
 

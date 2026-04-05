@@ -16,7 +16,7 @@
 
     - name: Check GitLab health endpoint returns 200
       ansible.builtin.uri:
-        url: "https://gitlab.home.test/-/health"
+        url: "https://localhost/-/health"
         method: GET
         validate_certs: false
         status_code: 200
@@ -31,3 +31,30 @@
           - gitlab_health.status == 200
         fail_msg: "GitLab /-/health did not return 200 (status: {{ gitlab_health.status }})"
         success_msg: "GitLab is healthy (/-/health returned 200)"
+
+    - name: Check GitLab API v4 returns version info
+      ansible.builtin.uri:
+        url: "https://localhost/api/v4/version"
+        method: GET
+        validate_certs: false
+        status_code: 401  # Unauthenticated access returns 401; proves API is up
+      register: gitlab_api
+
+    - name: Assert GitLab API v4 is reachable
+      ansible.builtin.assert:
+        that:
+          - gitlab_api.status == 401
+        fail_msg: "GitLab API v4 did not respond (status: {{ gitlab_api.status }})"
+        success_msg: "GitLab API v4 is reachable (responded with 401 as expected for unauthenticated)"
+
+    - name: Check gitlab-runner service is active
+      ansible.builtin.systemd:
+        name: gitlab-runner
+      register: gitlab_runner_svc
+
+    - name: Assert gitlab-runner service is active
+      ansible.builtin.assert:
+        that:
+          - gitlab_runner_svc.status.ActiveState == "active"
+        fail_msg: "gitlab-runner service is not active (state: {{ gitlab_runner_svc.status.ActiveState }})"
+        success_msg: "gitlab-runner service is active"

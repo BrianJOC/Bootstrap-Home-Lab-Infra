@@ -2,14 +2,23 @@
 # Wait for Authentik API to be available
 - name: Wait for Authentik API to be ready
   ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/users/"
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/root/config/"
     method: GET
-    status_code: [200, 401, 403]
+    status_code: [200]
     validate_certs: false
   register: authentik_api_check
   retries: 30
   delay: 10
-  until: authentik_api_check.status in [200, 401, 403]
+  until: authentik_api_check.status == 200
+
+# Write initialized marker. This causes the env template to omit bootstrap credentials
+# on subsequent runs — the template checks authentik_db_initialized via the marker stat.
+- name: Write Authentik initialized marker
+  ansible.builtin.file:
+    path: "{{ authentik_data_dir }}/.initialized"
+    state: touch
+    mode: "0400"
+  when: not authentik_db_initialized | default(false)
 
 # Get API token for further configuration
 - name: Get Authentik API token
@@ -22,7 +31,7 @@
     validate_certs: false
   register: authentik_token_check
   no_log: true
-  when: authentik_bootstrap_token is defined
+  when: authentik_bootstrap_token != ""
 
 # Create OIDC provider for Vault
 - name: Check if Vault OIDC provider exists
@@ -35,7 +44,7 @@
     validate_certs: false
   register: vault_oidc_check
   no_log: true
-  when: authentik_bootstrap_token is defined
+  when: authentik_bootstrap_token != ""
 
 - name: Create Vault OIDC provider
   ansible.builtin.uri:
@@ -48,14 +57,16 @@
     body:
       name: vault
       client_type: confidential
-      redirect_uris: "https://vault.{{ internal_domain }}:8200/ui/vault/auth/oidc/oidc/callback"
+      redirect_uris:
+        - url: "https://vault.{{ internal_domain }}:8200/ui/vault/auth/oidc/oidc/callback"
+          matching_mode: strict
       sub_mode: hashed_user_id
       include_claims_in_id_token: true
       signing_key: null
     status_code: [201]
     validate_certs: false
   when:
-    - authentik_bootstrap_token is defined
+    - authentik_bootstrap_token != ""
     - vault_oidc_check.json.count is defined
     - vault_oidc_check.json.count == 0
   no_log: true
@@ -71,7 +82,7 @@
     validate_certs: false
   register: gitlab_oidc_check
   no_log: true
-  when: authentik_bootstrap_token is defined
+  when: authentik_bootstrap_token != ""
 
 - name: Create GitLab OIDC provider
   ansible.builtin.uri:
@@ -84,14 +95,16 @@
     body:
       name: gitlab
       client_type: confidential
-      redirect_uris: "https://gitlab.{{ internal_domain }}/users/auth/openid_connect/callback"
+      redirect_uris:
+        - url: "https://gitlab.{{ internal_domain }}/users/auth/openid_connect/callback"
+          matching_mode: strict
       sub_mode: hashed_user_id
       include_claims_in_id_token: true
       signing_key: null
     status_code: [201]
     validate_certs: false
   when:
-    - authentik_bootstrap_token is defined
+    - authentik_bootstrap_token != ""
     - gitlab_oidc_check.json.count is defined
     - gitlab_oidc_check.json.count == 0
   no_log: true

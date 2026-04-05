@@ -7,5 +7,5 @@
       vars:
         internal_domain: home.test
         bootstrap_server_ip: "127.0.0.1"
-        admin_password: "TestPassword123!"
+        technitium_admin_password: "TestPassword123!"
         # role-specific test vars

@@ -12,7 +12,7 @@ terraform {
     }
     authentik = {
       source  = "goauthentik/authentik"
-      version = "~> 2024.2"
+      version = "~> 2024.2.0"  # patch-pinned — see authentik-config/main.tf
     }
     gitlab = {
       source  = "gitlabhq/gitlab"

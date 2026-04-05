@@ -1,13 +1,13 @@
 ---
 - name: Assert certificate file exists
   ansible.builtin.stat:
-    path: "{{ cert_dir }}/certificates/{{ internal_domain }}.crt"
+    path: "{{ cert_dir }}/certificates/_.{{ internal_domain }}.crt"
   register: cert_verify_stat
   failed_when: not cert_verify_stat.stat.exists
 
 - name: Assert certificate is valid
   ansible.builtin.command: >
-    openssl x509 -in {{ cert_dir }}/certificates/{{ internal_domain }}.crt
+    openssl x509 -in {{ cert_dir }}/certificates/_.{{ internal_domain }}.crt
     -noout -text
   register: cert_text
   changed_when: false
@@ -16,16 +16,16 @@
 - name: Assert certificate subject matches domain
   ansible.builtin.assert:
     that:
-      - "'*.{{ internal_domain }}' in cert_text.stdout or internal_domain in cert_text.stdout"
+      - "'*.' ~ internal_domain in cert_text.stdout or internal_domain in cert_text.stdout"
     fail_msg: "Certificate subject does not match *.{{ internal_domain }}"
     success_msg: "Certificate subject OK"
 
 - name: Assert private key file exists
   ansible.builtin.stat:
-    path: "{{ cert_dir }}/certificates/{{ internal_domain }}.key"
+    path: "{{ cert_dir }}/certificates/_.{{ internal_domain }}.key"
   register: key_verify_stat
   failed_when: not key_verify_stat.stat.exists
 
 - name: Log TLS verification result
   ansible.builtin.debug:
-    msg: "TLS certificate verified: {{ cert_dir }}/certificates/{{ internal_domain }}.crt"
+    msg: "TLS certificate verified: {{ cert_dir }}/certificates/_.{{ internal_domain }}.crt"

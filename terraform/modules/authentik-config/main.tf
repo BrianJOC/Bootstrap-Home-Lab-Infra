@@ -3,7 +3,7 @@ terraform {
   required_providers {
     authentik = {
       source  = "goauthentik/authentik"
-      version = "~> 2024.2"
+      version = "~> 2024.2.0"  # patch-pinned to avoid breaking redirect_uris schema change in 2024.6+
     }
   }
 }

@@ -2,6 +2,8 @@
 - name: Verify
   hosts: all
   become: true
+  vars:
+    maas_admin_user: maas-admin
   tasks:
     - name: Check that MAAS snap is installed
       ansible.builtin.command:
@@ -31,3 +33,32 @@
           - maas_api.status == 200
         fail_msg: "MAAS API on port 5240 did not return 200 (status: {{ maas_api.status }})"
         success_msg: "MAAS API is responding on port 5240"
+
+    - name: Check MAAS status command exits successfully
+      ansible.builtin.command:
+        cmd: maas status
+      register: maas_status
+      changed_when: false
+      failed_when: false
+
+    - name: Assert MAAS services are running
+      ansible.builtin.assert:
+        that:
+          - maas_status.rc == 0
+        fail_msg: "maas status returned non-zero (rc={{ maas_status.rc }}): {{ maas_status.stdout }}"
+        success_msg: "MAAS services are running"
+
+    - name: Check MAAS admin user API key exists on controller
+      ansible.builtin.stat:
+        path: "{{ lookup('env', 'HOME') }}/.bootstrap/maas-api-key"
+      register: maas_key_stat
+      delegate_to: localhost
+      become: false
+
+    - name: Assert MAAS admin API key file exists
+      ansible.builtin.assert:
+        that:
+          - maas_key_stat.stat.exists
+          - maas_key_stat.stat.size > 0
+        fail_msg: "MAAS admin API key not found at ~/.bootstrap/maas-api-key on controller"
+        success_msg: "MAAS admin API key exists on controller"

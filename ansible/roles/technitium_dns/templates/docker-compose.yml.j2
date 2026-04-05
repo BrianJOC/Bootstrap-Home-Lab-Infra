@@ -12,3 +12,4 @@ services:
       - "{{ technitium_data_dir }}:/etc/dns"
     environment:
       - DNS_SERVER_DOMAIN={{ internal_domain }}
+      - DNS_SERVER_ADMIN_PASSWORD={{ technitium_admin_password }}

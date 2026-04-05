@@ -1,4 +1,24 @@
 ---
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - internal_domain is defined and internal_domain != ""
+      - bootstrap_server_ip is defined and bootstrap_server_ip != ""
+      - gitlab_admin_password is defined and gitlab_admin_password != ""
+      - gitlab_db_password is defined and gitlab_db_password != ""
+    fail_msg: "gitlab_install requires internal_domain, bootstrap_server_ip, gitlab_admin_password, and gitlab_db_password"
+
+- name: Ensure ~/.bootstrap directory exists on controller
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.bootstrap"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
 # Idempotency gate: check if GitLab is already running
 - name: Check if GitLab runsvdir is active
   ansible.builtin.command: gitlab-ctl status
@@ -14,6 +34,8 @@
   ansible.builtin.include_tasks: install.yml
   when: not gitlab_already_running
 
+# configure.yml runs unconditionally — it is idempotent via API check+create guards
+# and the controller-side token file. Re-runs are safe.
 - name: Configure GitLab
   ansible.builtin.include_tasks: configure.yml
 

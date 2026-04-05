@@ -3,18 +3,17 @@
   hosts: all
   become: true
   tasks:
-    - name: Check that Authentik containers are running
-      ansible.builtin.command:
-        cmd: docker compose ps --format json
-        chdir: /opt/authentik
-      register: compose_ps
-      changed_when: false
+    - name: Check that authentik-server container is running
+      community.docker.docker_container_info:
+        name: authentik-server
+      register: authentik_server_info
 
-    - name: Assert Authentik server container is running
+    - name: Assert authentik-server container is running
       ansible.builtin.assert:
         that:
-          - "'running' in compose_ps.stdout | lower or 'up' in compose_ps.stdout | lower"
-        fail_msg: "Authentik containers do not appear to be running"
+          - authentik_server_info.container is defined
+          - authentik_server_info.container.State.Running | default(false)
+        fail_msg: "authentik-server container is not running"
 
     - name: Check Authentik API responds on port 9000
       ansible.builtin.uri:

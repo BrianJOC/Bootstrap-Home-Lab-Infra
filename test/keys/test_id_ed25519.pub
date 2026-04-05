@@ -1,2 +1,1 @@
-# Replace this with your generated public key after running: just generate-test-keys
-# ssh-ed25519 AAAAC3... bootstrap-test-key
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAplBIPxTnSa/Agj9Rt9cYAGEQw9LQFYjFCvWusX75H8 bootstrap-test-key

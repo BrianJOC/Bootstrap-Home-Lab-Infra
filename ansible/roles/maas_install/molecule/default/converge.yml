@@ -7,6 +7,6 @@
       vars:
         internal_domain: home.test
         bootstrap_server_ip: "127.0.0.1"
-        admin_password: "TestPassword123!"
-        maas_http_port: 5240
-        # role-specific test vars
+        maas_admin_password: "TestPassword123!"
+        admin_email: "admin@home.test"
+        maas_db_password: "TestDbPassword123!"

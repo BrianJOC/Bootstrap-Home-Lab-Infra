@@ -1,7 +1,8 @@
 ---
+# Triggered by: notify: gitlab-ctl-reconfigure
+# Used for Day 2 gitlab.rb changes outside the initial install path.
 - name: gitlab-ctl-reconfigure
   ansible.builtin.command: gitlab-ctl reconfigure
-  listen: gitlab-ctl-reconfigure
   environment:
     GITLAB_DB_PASSWORD: "{{ gitlab_db_password }}"
     GITLAB_OIDC_SECRET: "{{ gitlab_oidc_secret | default('') }}"

@@ -14,13 +14,17 @@ stages:
   - plan
   - apply
 
-# Authenticate to Vault using GitLab CI JWT token
+# Authenticate to Vault using GitLab CI OIDC id_token (GitLab 15.7+).
+# CI_JOB_JWT_V2 was deprecated in GitLab 16 and removed in GitLab 17.
 .vault_auth: &vault_auth
+  id_tokens:
+    VAULT_ID_TOKEN:
+      aud: ${VAULT_ADDR}
   before_script:
     - |
       VAULT_TOKEN=$(curl -sf \
         --request POST \
-        --data "{\"jwt\": \"$CI_JOB_JWT_V2\", \"role\": \"$VAULT_ROLE\"}" \
+        --data "{\"jwt\": \"$VAULT_ID_TOKEN\", \"role\": \"$VAULT_ROLE\"}" \
         "$VAULT_ADDR/v1/auth/$VAULT_AUTH_PATH/login" | jq -r '.auth.client_token')
       export VAULT_TOKEN
 

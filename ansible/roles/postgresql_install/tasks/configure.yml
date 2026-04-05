@@ -1,5 +1,7 @@
 ---
-# Set postgres admin password
+# Set postgres admin password. This task runs on every converge — if pg_admin_password
+# changes (e.g. BOOTSTRAP_ADMIN_PASSWORD rotation), the PostgreSQL superuser password
+# changes too. Intentional: the admin password tracks the bootstrap credential.
 - name: Set PostgreSQL admin password
   community.postgresql.postgresql_user:
     name: postgres
@@ -21,11 +23,20 @@
     name: "{{ item.user }}"
     password: "{{ lookup('vars', item.user + '_db_password') }}"
     state: present
-    db: "{{ item.name }}"
-    priv: ALL
   loop: "{{ postgresql_databases }}"
   become_user: postgres
   no_log: true
+
+- name: Grant service users full privileges on their databases
+  community.postgresql.postgresql_privs:
+    db: "{{ item.name }}"
+    privs: ALL
+    type: database
+    obj: "{{ item.name }}"
+    roles: "{{ item.user }}"
+    state: present
+  loop: "{{ postgresql_databases }}"
+  become_user: postgres
 
 # Configure pg_hba.conf to allow connections from bootstrap server
 - name: Configure pg_hba.conf for service users
@@ -40,12 +51,14 @@
   loop: "{{ postgresql_databases }}"
   notify: reload postgresql
 
-# Configure postgresql.conf listen_addresses
-- name: Configure PostgreSQL to listen on all interfaces
-  community.postgresql.postgresql_set:
-    name: listen_addresses
-    value: "*"
-  become_user: postgres
+# Configure listen_addresses via lineinfile. postgresql_set always reports changed
+# for restart-required params; lineinfile is properly idempotent.
+- name: Configure PostgreSQL listen_addresses
+  ansible.builtin.lineinfile:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+    regexp: "^#?listen_addresses\\s*="
+    line: "listen_addresses = 'localhost,{{ bootstrap_server_ip }}'"
+    state: present
   notify: restart postgresql
 
 - name: Flush handlers to apply pg config changes

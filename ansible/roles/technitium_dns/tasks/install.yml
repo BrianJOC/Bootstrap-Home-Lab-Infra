@@ -72,10 +72,50 @@
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: /opt/technitium/docker-compose.yml
+    mode: "0600"
+    owner: root
+    group: root
+
+# Disable systemd-resolved stub listener so Technitium can bind port 53.
+# We must preserve working DNS across the transition:
+#   1. Capture upstream nameservers before the stub goes away.
+#   2. Write them directly to /etc/resolv.conf (breaks the symlink to stub).
+#   3. Disable the stub, flush (restarts resolved), freeing port 53.
+- name: Capture upstream nameservers from systemd-resolved full resolver
+  ansible.builtin.slurp:
+    src: /run/systemd/resolve/resolv.conf
+  register: upstream_resolv
+
+- name: Write /etc/resolv.conf with upstream nameservers (bypasses stub)
+  ansible.builtin.copy:
+    content: "{{ upstream_resolv.content | b64decode }}"
+    dest: /etc/resolv.conf
     mode: "0644"
-  notify: restart technitium
+
+- name: Ensure systemd-resolved drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    mode: "0755"
+
+- name: Disable systemd-resolved stub listener
+  ansible.builtin.copy:
+    dest: /etc/systemd/resolved.conf.d/10-disable-stub.conf
+    content: |
+      # Managed by Ansible — technitium_dns role
+      # Frees port 53 so Technitium can bind it directly.
+      [Resolve]
+      DNSStubListener=no
+    mode: "0644"
+
+- name: Restart systemd-resolved to apply stub listener change
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: restarted
 
 - name: Start Technitium via Docker Compose
   community.docker.docker_compose_v2:
     project_src: /opt/technitium
     state: present
+    recreate: always
+

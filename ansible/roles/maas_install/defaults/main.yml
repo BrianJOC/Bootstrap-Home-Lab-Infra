@@ -2,3 +2,11 @@
 maas_channel: "3.4/stable"
 maas_port: 5240
 maas_admin_user: maas-admin
+maas_health_timeout: 300
+maas_health_interval: 5
+
+# MAAS DB password — persisted on controller at ~/.bootstrap/.
+# Must match pg-maas-password used by postgresql_install role.
+maas_db_password: >-
+  {{ lookup('password', (lookup('env', 'HOME') + '/.bootstrap/pg-maas-password')
+     + ' length=32 chars=ascii_letters,digits') }}

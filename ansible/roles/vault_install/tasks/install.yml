@@ -1,7 +1,13 @@
 ---
-- name: Set vault_arch fact
+- name: Assert supported architecture
+  ansible.builtin.assert:
+    that: ansible_architecture in ['x86_64', 'aarch64']
+    fail_msg: "Unsupported architecture '{{ ansible_architecture }}'. Only x86_64 and aarch64 are supported."
+
+- name: Set vault_arch and checksum facts
   ansible.builtin.set_fact:
     vault_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+    vault_sha256: "{{ vault_sha256_amd64 if ansible_architecture == 'x86_64' else vault_sha256_arm64 }}"
 
 - name: Install unzip dependency
   ansible.builtin.apt:
@@ -19,6 +25,7 @@
   ansible.builtin.get_url:
     url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_{{ vault_arch }}.zip"
     dest: "{{ vault_tmp_dir.path }}/vault.zip"
+    checksum: "sha256:{{ vault_sha256 }}"
     mode: "0644"
 
 - name: Unzip Vault binary
@@ -88,10 +95,11 @@
     group: "{{ vault_user }}"
     mode: "0750"
 
-# Copy TLS certs to vault config path
-- name: Copy TLS fullchain cert to Vault TLS dir
+# Copy TLS certs to vault config path.
+# lego stores wildcard certs with '*' replaced by '_' in the filename.
+- name: Copy TLS cert to Vault TLS dir
   ansible.builtin.copy:
-    src: "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.crt"
+    src: "{{ vault_cert_dir }}/certificates/_.{{ internal_domain }}.crt"
     dest: "{{ vault_config_dir }}/tls/fullchain.pem"
     owner: "{{ vault_user }}"
     group: "{{ vault_user }}"
@@ -101,7 +109,7 @@
 
 - name: Copy TLS private key to Vault TLS dir
   ansible.builtin.copy:
-    src: "{{ vault_cert_dir }}/certificates/{{ internal_domain }}.key"
+    src: "{{ vault_cert_dir }}/certificates/_.{{ internal_domain }}.key"
     dest: "{{ vault_config_dir }}/tls/privkey.pem"
     owner: "{{ vault_user }}"
     group: "{{ vault_user }}"

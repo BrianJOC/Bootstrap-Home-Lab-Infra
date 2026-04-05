@@ -6,8 +6,12 @@
     - role: tls_lego
       vars:
         internal_domain: home.test
-        bootstrap_server_ip: "127.0.0.1"
-        admin_password: "TestPassword123!"
-        acme_server_url: "https://localhost:14000/dir"
-        cloudflare_api_base_url: "http://localhost:8080"
-        # role-specific test vars
+        admin_email: test@home.test
+        cf_dns_api_token: test-cf-token-placeholder
+        acme_server_url: "https://127.0.0.1:14000/dir"
+        # Pebble CA cert is installed by mocks-up-vm into the system trust store.
+        # lego_acme_ca_cert_url is only needed when a URL can serve the correct CA PEM.
+        lego_acme_ca_cert_url: ""
+        cloudflare_api_base_url: "http://127.0.0.1:8080"
+        lego_dns_provider: "httpreq"
+        lego_httpreq_endpoint: "http://127.0.0.1:8080"

@@ -3,6 +3,6 @@
   community.docker.docker_compose_v2:
     project_src: "{{ authentik_data_dir }}"
     state: present
-    recreate: always
+    recreate: auto
   listen: restart authentik
   no_log: true

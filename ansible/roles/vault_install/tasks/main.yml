@@ -18,6 +18,7 @@
   ansible.builtin.set_fact:
     vault_needs_install: >-
       {{ not vault_binary_stat.stat.exists or
+         (vault_version_check.rc | default(1)) != 0 or
          (vault_version_check.stdout is defined and vault_version not in vault_version_check.stdout) }}
 
 - name: Install Vault binary

@@ -6,6 +6,7 @@ import (
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 )
@@ -17,7 +18,7 @@ type MAASStage struct{}
 func (s *MAASStage) Name() string { return "maas" }
 
 // Check verifies MAAS is running and the API is accessible.
-func (s *MAASStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, error) {
+func (s *MAASStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return false, err
@@ -25,7 +26,7 @@ func (s *MAASStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, err
 	defer client.Close()
 
 	stdout, _, err := client.Run(
-		`maas status 2>/dev/null | grep -q "running" && echo running || snap list maas 2>/dev/null | grep -q maas && echo running || echo not-running`,
+		`snap list maas 2>/dev/null | grep -q maas && maas status 2>/dev/null | grep -q "running" && echo running || echo not-running`,
 	)
 	if err != nil {
 		return false, nil
@@ -34,7 +35,7 @@ func (s *MAASStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, err
 }
 
 // Run deploys MAAS and configures the lab VLAN via Ansible.
-func (s *MAASStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.Sink) error {
+func (s *MAASStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return err
@@ -50,7 +51,7 @@ func (s *MAASStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.S
 			"bootstrap_server_ip": cfg.BootstrapServerIP,
 			"lab_vlan_subnet":     cfg.LabVLANSubnet,
 			"lab_vlan_id":         intToStr(cfg.LabVLANID),
-			"maas_admin_password": cfg.Secrets.AdminPassword,
+			"maas_admin_password": sec.AdminPassword,
 		},
 	)
 }

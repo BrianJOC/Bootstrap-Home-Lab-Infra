@@ -1,4 +1,17 @@
 ---
+# Ensure the secret-persistence directory exists on the controller before any
+# lookup('password', ...) expansion runs for db passwords.
+- name: Ensure controller secret directory exists with restricted permissions
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.bootstrap"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
 # Idempotency gate: check if PostgreSQL is already running
 - name: Check if PostgreSQL service is running
   ansible.builtin.systemd:

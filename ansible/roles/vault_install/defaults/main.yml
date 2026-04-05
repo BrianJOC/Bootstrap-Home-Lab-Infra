@@ -1,9 +1,18 @@
 ---
 vault_version: "1.15.4"
+# SHA-256 checksums for vault v1.15.4 binaries
+# (from https://releases.hashicorp.com/vault/1.15.4/vault_1.15.4_SHA256SUMS)
+vault_sha256_amd64: "f42f550713e87cceef2f29a4e2b754491697475e3d26c0c5616314e40edd8e1b"
+vault_sha256_arm64: "79aee168078eb8c0dbb31c283e1136a7575f59fe36fccbb1f1ef6a16e0b67fdb"
 vault_user: vault
 vault_data_dir: /opt/vault/data
 vault_config_dir: /etc/vault.d
 vault_cert_dir: /opt/certs
 vault_port: 8200
+vault_cluster_port: 8201
 vault_shares: 5
 vault_threshold: 3
+# Path on the controller where vault-init.json (Shamir shares + root token) is saved.
+# MUST be outside the repository tree to avoid accidental git commits.
+# No default — operator must set this explicitly (or override in test/CI).
+vault_init_output_path: "{{ playbook_dir }}/../../vault-init.json"

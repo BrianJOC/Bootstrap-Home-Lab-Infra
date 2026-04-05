@@ -1,6 +1,22 @@
 ---
 lego_version: "4.16.1"
+# SHA-256 checksums for lego v4.16.1 tarballs (from https://github.com/go-acme/lego/releases/download/v4.16.1/lego_4.16.1_checksums.txt)
+lego_checksum_amd64: "sha256:e9826f955337c1fd825d21b073168692711985e25db013ff6b00e9a55a9644b4"
+lego_checksum_arm64: "sha256:0669037c2bcff11d0599765c63f186dfc98397b6a827f5cb2e48e9e69c12626c"
 lego_install_dir: /usr/local/bin
 cert_dir: /opt/certs
 acme_server_url: "https://acme-v02.api.letsencrypt.org/directory"
+# Renew if cert expires within this many seconds (30 days = 2592000).
+# Must match the tls_renew_threshold_seconds constant in internal/stages/stage2_tls.go.
+tls_renew_threshold_seconds: 2592000
+# URL to download a PEM CA cert to trust for the ACME server.
+# Required when using a test ACME server (e.g., Pebble) with a self-signed cert.
+# Leave empty for production Let's Encrypt.
+lego_acme_ca_cert_url: ""
 cloudflare_api_base_url: "https://api.cloudflare.com"
+# DNS provider for lego. Use "cloudflare" for production.
+# Override to "httpreq" for testing with a mock HTTP endpoint.
+lego_dns_provider: "cloudflare"
+# Endpoint for httpreq DNS provider (used when lego_dns_provider=httpreq).
+# The server must handle POST /present and POST /cleanup requests.
+lego_httpreq_endpoint: ""

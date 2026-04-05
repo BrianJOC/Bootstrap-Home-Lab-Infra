@@ -78,19 +78,12 @@ var (
 )
 
 // renderStageRow renders a single stage row with icon and label.
-func renderStageRow(name, state string, active bool) string {
+func renderStageRow(name, state string) string {
 	var icon, label string
 	switch state {
-	case "pending":
-		icon = stylePending.Render(iconPending)
-		label = stylePending.Render(name)
 	case "running":
 		icon = styleRunning.Render(iconRunning)
-		if active {
-			label = styleRunning.Render(name)
-		} else {
-			label = styleRunning.Render(name)
-		}
+		label = styleRunning.Render(name)
 	case "done":
 		icon = styleDone.Render(iconDone)
 		label = styleDone.Render(name)

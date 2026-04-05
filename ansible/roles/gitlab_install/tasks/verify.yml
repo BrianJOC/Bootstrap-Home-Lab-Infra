@@ -18,7 +18,10 @@
   ansible.builtin.systemd:
     name: gitlab-runner
   register: runner_verify_status
-  failed_when: runner_verify_status.status.ActiveState != "active"
+  # status is a dict when service exists; a string "not-found" when absent — guard both cases
+  failed_when: >
+    runner_verify_status.status is not mapping or
+    runner_verify_status.status.ActiveState != "active"
 
 - name: Log GitLab verification result
   ansible.builtin.debug:

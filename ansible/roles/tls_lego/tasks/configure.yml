@@ -5,16 +5,41 @@
     state: directory
     mode: "0755"
 
-# Idempotency: check if cert exists and is valid (not expiring within 30 days)
+# When using a non-production ACME server (e.g., Pebble for testing), its CA cert
+# must be trusted by the system so lego can verify TLS to the ACME server.
+# Pebble uses a self-signed cert; add it to the Ubuntu system CA bundle.
+# validate_certs: false is intentional and test-only. This task is gated on
+# lego_acme_ca_cert_url being non-empty, which is never set in production.
+# The CA cert being fetched (pebble minica) is already installed in the trust
+# store by mocks-up-vm before Ansible runs, so in practice this task is a no-op
+# in CI. The option is kept for environments where mocks-up-vm has not run.
+- name: Download ACME CA certificate for test ACME server
+  ansible.builtin.get_url:
+    url: "{{ lego_acme_ca_cert_url }}"
+    dest: /usr/local/share/ca-certificates/acme-test-ca.crt
+    validate_certs: false # test-only; not executed when lego_acme_ca_cert_url is empty (production default)
+    mode: "0644"
+  when: lego_acme_ca_cert_url | length > 0
+  register: acme_ca_download
+
+- name: Update system CA certificates
+  ansible.builtin.command: update-ca-certificates
+  register: update_ca_result
+  when: acme_ca_download is changed
+  changed_when: "'Updating certificates' in update_ca_result.stdout"
+
+# Idempotency: check if cert exists and is valid (not expiring within 30 days).
+# lego stores wildcard certs with '*' replaced by '_' in the filename.
+# Threshold: 2592000 seconds = 30 days (must match tls_renew_threshold_seconds).
 - name: Check if certificate file already exists
   ansible.builtin.stat:
-    path: "{{ cert_dir }}/certificates/{{ internal_domain }}.crt"
+    path: "{{ cert_dir }}/certificates/_.{{ internal_domain }}.crt"
   register: cert_stat
 
 - name: Check certificate expiry if cert exists
   ansible.builtin.command: >
-    openssl x509 -checkend 2592000 -noout
-    -in {{ cert_dir }}/certificates/{{ internal_domain }}.crt
+    openssl x509 -checkend {{ tls_renew_threshold_seconds }} -noout
+    -in {{ cert_dir }}/certificates/_.{{ internal_domain }}.crt
   register: cert_expiry_check
   changed_when: false
   failed_when: false
@@ -29,25 +54,42 @@
 - name: Issue TLS certificate via Cloudflare DNS-01
   ansible.builtin.command: >
     {{ lego_install_dir }}/lego
+    --accept-tos
     --email={{ admin_email }}
     --domains=*.{{ internal_domain }}
     --domains={{ internal_domain }}
-    --dns=cloudflare
+    --dns={{ lego_dns_provider }}
+    --dns.disable-cp
     --server={{ acme_server_url }}
     --path={{ cert_dir }}
     run
   environment:
     CLOUDFLARE_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
     CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
-    LEGO_CA_CERTIFICATES: ""
+    HTTPREQ_ENDPOINT: "{{ lego_httpreq_endpoint }}"
   when: not cert_valid
-  no_log: true
   register: lego_run
+  no_log: true
+
+# Always enforce restrictive key permissions, not only on issuance.
+# This corrects any drift (e.g., manual chmod) without re-issuing the cert.
+- name: Restrict private key permissions
+  ansible.builtin.file:
+    path: "{{ cert_dir }}/certificates/_.{{ internal_domain }}.key"
+    mode: "0600"
+
+- name: Get certificate expiry date
+  ansible.builtin.command: >
+    openssl x509 -enddate -noout
+    -in {{ cert_dir }}/certificates/_.{{ internal_domain }}.crt
+  register: cert_enddate
+  changed_when: false
+  when: not cert_valid
 
 - name: Write cert meta.json
-  ansible.builtin.shell: |
-    EXPIRY=$(openssl x509 -enddate -noout -in {{ cert_dir }}/certificates/{{ internal_domain }}.crt | cut -d= -f2)
-    echo '{"expiry":"'"$EXPIRY"'","domain":"{{ internal_domain }}","san":["*.{{ internal_domain }}","{{ internal_domain }}"],"issuer":"lego"}' \
-      > {{ cert_dir }}/certificates/meta.json
+  ansible.builtin.copy:
+    content: |
+      {"expiry":"{{ cert_enddate.stdout | regex_replace('^notAfter=', '') }}","domain":"{{ internal_domain }}","san":["*.{{ internal_domain }}","{{ internal_domain }}"],"issuer":"lego"}
+    dest: "{{ cert_dir }}/certificates/meta.json"
+    mode: "0644"
   when: not cert_valid
-  changed_when: true

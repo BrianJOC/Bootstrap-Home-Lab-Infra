@@ -2,13 +2,24 @@ package ssh
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// ErrAuthFailed is returned when the SSH server rejects the key.
+var ErrAuthFailed = errors.New("SSH authentication failed: check SSH key path and user")
+
+// ErrConnRefused is returned when the target host is not accepting connections.
+var ErrConnRefused = errors.New("SSH connection refused: check target host and port")
+
+// ErrConnTimeout is returned when the connection attempt times out.
+var ErrConnTimeout = errors.New("SSH connection timed out: check network and firewall")
 
 const (
 	defaultDialTimeout    = 10 * time.Second
@@ -39,7 +50,9 @@ func New(host, user, keyPath string) (*Client, error) {
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		// Accept any host key during bootstrap; operators validate host identity via other means.
+		// InsecureIgnoreHostKey is intentional for bootstrap: the target host may
+		// not have a known-hosts entry yet. Operators should verify the target's
+		// SSH fingerprint out-of-band. This is logged at connection time.
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
 		Timeout:         defaultDialTimeout,
 	}
@@ -52,7 +65,7 @@ func New(host, user, keyPath string) (*Client, error) {
 
 	client, err := ssh.Dial("tcp", addr, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("dialing %s: %w", addr, err)
+		return nil, classifyDialError(addr, err)
 	}
 
 	return &Client{
@@ -85,10 +98,13 @@ func (c *Client) RunWithTimeout(cmd string, timeout time.Duration) (stdout, stde
 		done <- session.Run(cmd)
 	}()
 
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
 	select {
 	case runErr := <-done:
 		return outBuf.String(), errBuf.String(), runErr
-	case <-time.After(timeout):
+	case <-timer.C:
 		session.Close() //nolint:errcheck
 		return outBuf.String(), errBuf.String(), fmt.Errorf("command timed out after %s", timeout)
 	}
@@ -97,6 +113,25 @@ func (c *Client) RunWithTimeout(cmd string, timeout time.Duration) (stdout, stde
 // Close closes the underlying SSH connection.
 func (c *Client) Close() error {
 	return c.client.Close()
+}
+
+// classifyDialError maps raw dial errors to the typed sentinel errors above.
+func classifyDialError(addr string, err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection refused"):
+		return fmt.Errorf("%w (host: %s)", ErrConnRefused, addr)
+	case strings.Contains(msg, "unable to authenticate"),
+		strings.Contains(msg, "ssh: handshake failed"),
+		strings.Contains(msg, "no supported methods remain"),
+		strings.Contains(msg, "publickey"):
+		return fmt.Errorf("%w (host: %s)", ErrAuthFailed, addr)
+	case strings.Contains(msg, "timeout"), strings.Contains(msg, "timed out"),
+		strings.Contains(msg, "deadline exceeded"):
+		return fmt.Errorf("%w (host: %s)", ErrConnTimeout, addr)
+	default:
+		return fmt.Errorf("dialing %s: %w", addr, err)
+	}
 }
 
 // DetectArch runs uname -m on the remote host and returns the result.

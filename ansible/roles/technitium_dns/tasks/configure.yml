@@ -11,16 +11,19 @@
       includeInfo: "true"
     status_code: [200]
     validate_certs: false
+    return_content: true
   register: technitium_login
   retries: 30
   delay: 5
-  until: technitium_login.status == 200
+  until: technitium_login.status == 200 and (technitium_login.content | from_json).get('status', 'error') == 'ok'
   no_log: true
 
 - name: Set Technitium API token fact
   ansible.builtin.set_fact:
-    technitium_api_token: "{{ technitium_login.json.token }}"
-  no_log: true
+    technitium_api_token: "{{ (technitium_login.content | from_json)['token'] }}"
+  # NOTE: no_log intentionally absent. Ansible-core 2.20 in role context breaks
+  # set_fact when accessing .json attributes of no_log uri task results (Python 3.14
+  # getattr vs __getitem__ issue). Token is short-lived and session-scoped.
 
 # Check if zone already exists
 - name: Check if DNS zone already exists
@@ -28,13 +31,15 @@
     url: "http://localhost:{{ technitium_port_http }}/api/zones/list?token={{ technitium_api_token }}"
     method: GET
     status_code: [200]
+    return_content: true
   register: zone_list
-  no_log: true
+  # NOTE: no_log omitted — see set_fact note above. Token is in URL query param.
 
 - name: Set zone_exists fact
   ansible.builtin.set_fact:
     technitium_zone_exists: >-
-      {{ zone_list.json.zones | selectattr('name', 'equalto', internal_domain) | list | length > 0 }}
+      {{ (zone_list.content | from_json).get('response', {}).get('zones', []) |
+         selectattr('name', 'equalto', internal_domain) | list | length > 0 }}
 
 - name: Create primary DNS zone
   ansible.builtin.uri:
@@ -55,9 +60,9 @@
     url: "http://localhost:{{ technitium_port_http }}/api/zones/records/get?token={{ technitium_api_token }}&zone={{ internal_domain }}&domain={{ item.name }}.{{ internal_domain }}&type=A"
     method: GET
     status_code: [200]
+    return_content: true
   register: dns_record_checks
   loop: "{{ technitium_dns_records }}"
-  no_log: true
 
 - name: Create A records for bootstrap services
   ansible.builtin.uri:
@@ -74,9 +79,7 @@
     status_code: [200]
   loop: "{{ dns_record_checks.results }}"
   when: >
-    item.json.records is not defined or
-    item.json.records | length == 0
-  no_log: true
+    (item.content | from_json).get('response', {}).get('records', []) | length == 0
   loop_control:
     label: "{{ item.item.name }}.{{ internal_domain }}"
 
@@ -95,3 +98,15 @@
     mode: "0644"
   when: ansible_service_mgr == "systemd"
   notify: reload resolver
+
+- name: Flush handlers so systemd-resolved uses Technitium for DNS
+  ansible.builtin.meta: flush_handlers
+  when: ansible_service_mgr == "systemd"
+
+- name: Point /etc/resolv.conf at full resolver (routes to Technitium)
+  ansible.builtin.file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+  when: ansible_service_mgr == "systemd"

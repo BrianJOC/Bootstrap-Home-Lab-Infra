@@ -6,7 +6,9 @@
     state: started
     enabled: true
 
-# Wait for vault to be ready (sealed state is OK at this point)
+# Wait for vault to be ready (sealed state is OK at this point).
+# validate_certs: false is unavoidable here — Vault's TLS cert is signed by the
+# internal CA that Vault itself will later manage. This is only used at bootstrap.
 - name: Wait for Vault API to respond
   ansible.builtin.uri:
     url: "https://localhost:{{ vault_port }}/v1/sys/health"
@@ -31,41 +33,69 @@
   ansible.builtin.set_fact:
     vault_initialized: "{{ vault_init_status.json.initialized }}"
 
-# Initialize Vault if not already initialized
-- name: Initialize Vault with Shamir shares
-  ansible.builtin.uri:
-    url: "https://localhost:{{ vault_port }}/v1/sys/init"
-    method: POST
-    body_format: json
-    body:
-      secret_shares: "{{ vault_shares }}"
-      secret_threshold: "{{ vault_threshold }}"
-    validate_certs: false
-    status_code: [200]
-  register: vault_init_result
+# Initialize Vault, save keys, and unseal — all in one shell task to avoid the
+# Ansible 2.20 no_log role context bug (registered uri results with no_log: true
+# are censored in role context, making the response body inaccessible).
+# After a restart, the operator must manually unseal using vault-init.json.
+- name: Initialize Vault and unseal with Shamir shares
+  ansible.builtin.shell: |
+    set -e
+    # Create the file with restricted permissions before writing secrets into it,
+    # avoiding a race window where the file is world-readable between creation and chmod.
+    install -m 600 /dev/null /tmp/vault-init.json
+    vault operator init \
+      -key-shares={{ vault_shares | int }} \
+      -key-threshold={{ vault_threshold | int }} \
+      -format=json > /tmp/vault-init.json
+    python3 -c "import json; keys=json.load(open('/tmp/vault-init.json'))['unseal_keys_b64'][:{{ vault_threshold | int }}]; print('\n'.join(keys))" | \
+      while IFS= read -r key; do vault operator unseal "$key"; done
   when: not vault_initialized
   no_log: true
-
-- name: Write vault-init.json to remote temp location
-  ansible.builtin.copy:
-    content: "{{ vault_init_result.json | to_json }}"
-    dest: /tmp/vault-init.json
-    mode: "0600"
-  when: not vault_initialized
-  no_log: true
+  environment:
+    VAULT_ADDR: "https://localhost:{{ vault_port }}"
+    VAULT_SKIP_VERIFY: "true"
+  changed_when: true
 
 - name: Fetch vault-init.json to controller
   ansible.builtin.fetch:
     src: /tmp/vault-init.json
-    dest: "{{ playbook_dir }}/../../vault-init.json"
+    dest: "{{ vault_init_output_path }}"
     flat: true
   when: not vault_initialized
   no_log: true
+  register: vault_init_fetched
 
+- name: Warn operator about plaintext unseal keys
+  ansible.builtin.debug:
+    msg: >-
+      vault-init.json has been written to {{ vault_init_output_path }}.
+      This file contains plaintext Shamir unseal keys and the root token.
+      Move it to encrypted storage (e.g. a password manager or encrypted USB)
+      and delete the local copy once you have recorded the keys.
+  when: not vault_initialized
+
+# Gate removal on a successful fetch. If the fetch failed (network drop, etc.), the remote
+# file is preserved so a retry can succeed. On subsequent runs where vault_initialized is true,
+# the removal still fires (no when guard) to clean up any file left by a previous partial run.
 - name: Remove vault-init.json from remote
   ansible.builtin.file:
     path: /tmp/vault-init.json
     state: absent
+  when: >
+    vault_initialized or
+    (vault_init_fetched is defined and vault_init_fetched is not skipped and
+     vault_init_fetched is not failed)
+
+- name: Restrict vault-init.json permissions on controller
+  ansible.builtin.file:
+    path: "{{ vault_init_output_path }}"
+    mode: "0600"
+    state: file
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
   when: not vault_initialized
 
 - name: Write vault initialized marker

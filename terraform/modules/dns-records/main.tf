@@ -26,6 +26,8 @@ resource "null_resource" "dns_record" {
     ttl   = tostring(each.value.ttl)
     zone  = var.zone
     url   = var.technitium_url
+    # token stored in triggers so destroy provisioner can access it (input vars unavailable during destroy)
+    token = var.technitium_api_token
   }
 
   # Create / upsert record
@@ -69,7 +71,7 @@ resource "null_resource" "dns_record" {
       curl -sf -o /dev/null \
         "${self.triggers.url}/api/zones/records/delete" \
         -X POST \
-        -d "token=${var.technitium_api_token}" \
+        -d "token=${self.triggers.token}" \
         -d "domain=${self.triggers.zone}" \
         -d "name=${self.triggers.name}" \
         -d "type=${self.triggers.type}" \

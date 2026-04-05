@@ -2,17 +2,26 @@ package stages
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
+
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 )
+
+const minUbuntuVersion = "22.04"
 
 // ConfigStage is Stage 0: config collection and SSH validation.
 type ConfigStage struct{}
@@ -21,124 +30,215 @@ type ConfigStage struct{}
 func (s *ConfigStage) Name() string { return "config-collection" }
 
 // Check always returns false — config collection always runs to validate inputs.
-func (s *ConfigStage) Check(_ context.Context, _ *config.RunConfig) (bool, error) {
+func (s *ConfigStage) Check(_ context.Context, _ *config.Config, _ *runcontext.RunContext) (bool, error) {
 	return false, nil
 }
 
-// Run executes Stage 0.
-func (s *ConfigStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.Sink) error {
-	sink.Info(s.Name(), "validating configuration")
+// Run executes Stage 0: validates config, establishes SSH, detects arch/OS, writes files.
+func (s *ConfigStage) Run(ctx context.Context, cfg *config.Config, sec *config.Secrets, rc *runcontext.RunContext, sink stage.Sink) error {
+	sink.Log("info", s.Name(), "validating configuration", nil)
 
-	// Validate the config.
-	if err := config.Validate(cfg); err != nil {
+	if err := config.Validate(&config.RunConfig{Config: cfg, Secrets: sec}); err != nil {
 		return fmt.Errorf("config validation failed: %w", err)
 	}
 
-	// Check SSH connectivity.
-	sink.Info(s.Name(), fmt.Sprintf("testing SSH connectivity to %s", cfg.TargetHost))
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+	// SSH connectivity with re-prompt loop on auth failure (B4).
+	client, err := s.dialWithRetry(ctx, cfg, sink)
 	if err != nil {
-		return fmt.Errorf("SSH connectivity check failed: %w", err)
+		return err
 	}
 	defer client.Close()
 
 	// Detect target architecture.
-	sink.Info(s.Name(), "detecting target architecture")
+	sink.Log("info", s.Name(), "detecting target architecture", nil)
 	archOut, err := client.DetectArch()
 	if err != nil {
 		return fmt.Errorf("arch detection failed: %w", err)
 	}
 	arch := config.ParseArch(strings.TrimSpace(archOut))
 	if arch == config.ArchUnknown {
-		ok, verifyErr := sink.Verify(s.Name(), fmt.Sprintf("unknown architecture %q detected — continue?", strings.TrimSpace(archOut)))
+		ok, verifyErr := sink.Confirm(fmt.Sprintf("unknown architecture %q detected — continue?", strings.TrimSpace(archOut)))
 		if verifyErr != nil {
-			return fmt.Errorf("verify failed: %w", verifyErr)
+			return fmt.Errorf("confirm failed: %w", verifyErr)
 		}
 		if !ok {
 			return fmt.Errorf("aborted: unknown architecture")
 		}
 	}
-	cfg.TargetArch = arch
-	sink.Info(s.Name(), fmt.Sprintf("detected arch: %s", arch))
+	rc.TargetArch = arch
+	sink.Log("info", s.Name(), fmt.Sprintf("detected arch: %s", arch), nil)
 
-	// Detect target OS.
-	sink.Info(s.Name(), "detecting target OS")
-	osName, osVersion, err := client.DetectOS()
-	if err != nil {
-		sink.Warn(s.Name(), fmt.Sprintf("could not detect OS: %v", err))
-	} else {
-		osName = strings.TrimSpace(osName)
-		osVersion = strings.TrimSpace(osVersion)
-		sink.Info(s.Name(), fmt.Sprintf("detected OS: %s %s", osName, osVersion))
-
-		if osName != "Ubuntu" {
-			ok, verifyErr := sink.Verify(s.Name(), fmt.Sprintf("target OS is %q, not Ubuntu — continue?", osName))
-			if verifyErr != nil {
-				return fmt.Errorf("verify failed: %w", verifyErr)
-			}
-			if !ok {
-				return fmt.Errorf("aborted: unsupported OS")
-			}
-		}
+	// Detect and validate target OS (B3).
+	sink.Log("info", s.Name(), "detecting target OS", nil)
+	if err := s.checkOS(client, sink); err != nil {
+		return err
 	}
 
-	// Write config.yaml (structural fields only, no secrets).
-	sink.Info(s.Name(), "writing config.yaml")
-	if err := writeConfigYAML(cfg.Config); err != nil {
+	// Write config.yaml to the path the operator passed via --config.
+	sink.Log("info", s.Name(), fmt.Sprintf("writing config.yaml to %s", rc.ConfigPath), nil)
+	if err := writeConfigYAML(cfg, rc.ConfigPath); err != nil {
 		return fmt.Errorf("writing config.yaml: %w", err)
 	}
 
-	// Write .env with mode 0600.
-	sink.Info(s.Name(), "writing .env")
-	if err := writeEnvFile(cfg.Secrets); err != nil {
+	// Write .env to the path the operator passed via --env.
+	sink.Log("info", s.Name(), fmt.Sprintf("writing .env to %s", rc.EnvPath), nil)
+	if err := writeEnvFile(sec, rc.EnvPath); err != nil {
 		return fmt.Errorf("writing .env: %w", err)
 	}
 
-	// Write run manifest.
-	sink.Info(s.Name(), "writing run manifest")
-	if err := writeManifest(cfg, arch); err != nil {
+	// Write run manifest with real SHA-256 hash (B2).
+	sink.Log("info", s.Name(), "writing run manifest", nil)
+	if err := writeManifest(cfg, rc); err != nil {
 		return fmt.Errorf("writing manifest: %w", err)
 	}
 
-	sink.Info(s.Name(), "stage=config-collection status=complete")
+	sink.Log("info", s.Name(), "stage complete", nil)
 	return nil
 }
 
-// writeConfigYAML writes the structural config to config.yaml.
-func writeConfigYAML(cfg *config.Config) error {
-	// Build YAML manually to avoid serializing env-only fields.
-	lines := []string{
-		fmt.Sprintf("target_host: %q", cfg.TargetHost),
-		fmt.Sprintf("ssh_user: %q", cfg.SSHUser),
-		fmt.Sprintf("ssh_key_path: %q", cfg.SSHKeyPath),
-		fmt.Sprintf("internal_domain: %q", cfg.InternalDomain),
-		fmt.Sprintf("cloudflare_zone_id: %q", cfg.CloudflareZoneID),
-		fmt.Sprintf("bootstrap_server_ip: %q", cfg.BootstrapServerIP),
-		fmt.Sprintf("lab_vlan_subnet: %q", cfg.LabVLANSubnet),
-		fmt.Sprintf("lab_vlan_id: %d", cfg.LabVLANID),
-		fmt.Sprintf("admin_email: %q", cfg.AdminEmail),
-		fmt.Sprintf("vault_shares: %d", cfg.VaultShares),
-		fmt.Sprintf("vault_threshold: %d", cfg.VaultThreshold),
+// dialWithRetry attempts SSH connection, re-prompting on auth failure (B4).
+func (s *ConfigStage) dialWithRetry(ctx context.Context, cfg *config.Config, sink stage.Sink) (*ssh.Client, error) {
+	keyPath := cfg.SSHKeyPath
+	host := cfg.TargetHost
+	user := cfg.SSHUser
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		sink.Log("info", s.Name(), fmt.Sprintf("testing SSH connectivity to %s (attempt %d)", host, attempt), nil)
+		client, err := ssh.New(host, user, keyPath)
+		if err == nil {
+			sink.Log("warn", s.Name(),
+				"SSH host key verification is disabled for bootstrap — verify the target's fingerprint out-of-band",
+				map[string]string{"host": host},
+			)
+			return client, nil
+		}
+
+		switch {
+		case errors.Is(err, ssh.ErrAuthFailed):
+			sink.Log("warn", s.Name(), fmt.Sprintf("SSH auth failed: %v", err), nil)
+			if attempt == 3 {
+				return nil, fmt.Errorf("SSH authentication failed after 3 attempts")
+			}
+			newPath, promptErr := sink.Prompt("SSH key path (auth failed, enter correct path)", false)
+			if promptErr != nil {
+				return nil, fmt.Errorf("prompt failed: %w", promptErr)
+			}
+			keyPath = strings.TrimSpace(newPath)
+			// Persist the corrected key path so subsequent stages use it.
+			cfg.SSHKeyPath = keyPath
+
+		case errors.Is(err, ssh.ErrConnRefused):
+			sink.Log("warn", s.Name(), fmt.Sprintf("SSH connection refused: %v", err), nil)
+			ok, confirmErr := sink.Confirm(fmt.Sprintf("Connection refused to %s — retry?", host))
+			if confirmErr != nil || !ok {
+				return nil, fmt.Errorf("SSH connection refused: %w", err)
+			}
+
+		case errors.Is(err, ssh.ErrConnTimeout):
+			sink.Log("warn", s.Name(), fmt.Sprintf("SSH connection timed out: %v", err), nil)
+			ok, confirmErr := sink.Confirm(fmt.Sprintf("Connection timed out to %s — retry?", host))
+			if confirmErr != nil || !ok {
+				return nil, fmt.Errorf("SSH connection timed out: %w", err)
+			}
+
+		default:
+			return nil, fmt.Errorf("SSH connectivity check failed: %w", err)
+		}
 	}
-	content := strings.Join(lines, "\n") + "\n"
-	return os.WriteFile("config.yaml", []byte(content), 0600)
+	return nil, fmt.Errorf("SSH connectivity failed after retries")
 }
 
-// writeEnvFile writes the secrets to .env with mode 0600.
-func writeEnvFile(sec *config.Secrets) error {
-	content := fmt.Sprintf("CF_DNS_API_TOKEN=%s\nBOOTSTRAP_ADMIN_PASSWORD=%s\n",
-		sec.CloudflareAPIToken,
-		sec.AdminPassword,
-	)
-	envPath := ".env"
-	if err := os.WriteFile(envPath, []byte(content), 0600); err != nil {
-		return fmt.Errorf("writing .env: %w", err)
+// checkOS validates the target is Ubuntu >= 22.04 (B3).
+func (s *ConfigStage) checkOS(client *ssh.Client, sink stage.Sink) error {
+	osName, osVersion, err := client.DetectOS()
+	if err != nil {
+		sink.Log("warn", s.Name(), fmt.Sprintf("could not detect OS: %v", err), nil)
+		return nil
 	}
-	if err := os.Chmod(envPath, 0600); err != nil {
-		return fmt.Errorf("chmod .env to 0600: %w", err)
+	osName = strings.TrimSpace(osName)
+	osVersion = strings.TrimSpace(osVersion)
+	sink.Log("info", s.Name(), fmt.Sprintf("detected OS: %s %s", osName, osVersion), nil)
+
+	if osName != "Ubuntu" {
+		ok, err := sink.Confirm(fmt.Sprintf("target OS is %q, not Ubuntu — continue?", osName))
+		if err != nil {
+			return fmt.Errorf("confirm failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("aborted: unsupported OS %q", osName)
+		}
+		return nil
 	}
-	// Verify mode.
-	fi, err := os.Stat(envPath)
+
+	// Check Ubuntu version >= 22.04.
+	if !versionAtLeast(osVersion, minUbuntuVersion) {
+		ok, err := sink.Confirm(fmt.Sprintf("Ubuntu %s detected; minimum supported is %s — continue anyway?", osVersion, minUbuntuVersion))
+		if err != nil {
+			return fmt.Errorf("confirm failed: %w", err)
+		}
+		if !ok {
+			return fmt.Errorf("aborted: Ubuntu %s is below minimum %s", osVersion, minUbuntuVersion)
+		}
+	}
+	return nil
+}
+
+// versionAtLeast returns true if ver >= min (semver-style, e.g. "22.04" >= "22.04").
+func versionAtLeast(ver, min string) bool {
+	vParts := strings.SplitN(ver, ".", 3)
+	mParts := strings.SplitN(min, ".", 3)
+	// Pad to same length.
+	for len(vParts) < len(mParts) {
+		vParts = append(vParts, "0")
+	}
+	for i, mp := range mParts {
+		vNum, _ := strconv.Atoi(vParts[i])
+		mNum, _ := strconv.Atoi(mp)
+		if vNum != mNum {
+			return vNum > mNum
+		}
+	}
+	return true // equal
+}
+
+// writeConfigYAML writes the structural config to the given path using yaml.v3.
+func writeConfigYAML(cfg *config.Config, path string) error {
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshalling config: %w", err)
+	}
+	return os.WriteFile(path, data, 0600)
+}
+
+// writeEnvFile writes secrets to the given path with properly quoted values.
+// The file is created at 0600 from the start — no chmod race window.
+func writeEnvFile(sec *config.Secrets, path string) error {
+	envMap := map[string]string{
+		"CF_DNS_API_TOKEN":         sec.CloudflareAPIToken,
+		"BOOTSTRAP_ADMIN_PASSWORD": sec.AdminPassword,
+	}
+	// godotenv.Marshal returns properly quoted KEY="VALUE" content.
+	content, err := godotenv.Marshal(envMap)
+	if err != nil {
+		return fmt.Errorf("marshalling .env content: %w", err)
+	}
+	// Open at 0600 from creation — eliminates the write-then-chmod race.
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return fmt.Errorf("creating .env: %w", err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(content + "\n"); err != nil {
+		return fmt.Errorf("writing .env content: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("syncing .env: %w", err)
+	}
+	// Belt-and-suspenders: verify final mode.
+	fi, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("stat .env: %w", err)
 	}
@@ -148,29 +248,27 @@ func writeEnvFile(sec *config.Secrets) error {
 	return nil
 }
 
-// manifest is written to logs/run-<timestamp>/manifest.json.
+// manifest is written to the run directory as manifest.json.
 type manifest struct {
-	TargetHost  string    `json:"target_host"`
-	Arch        string    `json:"arch"`
-	StartTime   time.Time `json:"start_time"`
-	ConfigHash  string    `json:"config_hash"`
-	PID         int       `json:"pid"`
+	TargetHost string    `json:"target_host"`
+	Arch       string    `json:"arch"`
+	StartTime  time.Time `json:"start_time"`
+	ConfigHash string    `json:"config_hash"`
+	PID        int       `json:"pid"`
 }
 
-// writeManifest writes the run manifest to logs/run-<timestamp>/manifest.json.
-func writeManifest(cfg *config.RunConfig, arch config.TargetArch) error {
-	timestamp := time.Now().UTC().Format("20060102T150405")
-	runDir := "run-" + timestamp
-	logDir := filepath.Join("logs", runDir)
+// writeManifest writes the run manifest with a real SHA-256 config hash (B2 fix).
+func writeManifest(cfg *config.Config, rc *runcontext.RunContext) error {
+	logDir := rc.RunDir
 	if err := os.MkdirAll(logDir, 0750); err != nil {
-		return fmt.Errorf("creating log dir: %w", err)
+		return fmt.Errorf("creating run dir: %w", err)
 	}
 
 	m := manifest{
 		TargetHost: cfg.TargetHost,
-		Arch:       string(arch),
-		StartTime:  time.Now().UTC(),
-		ConfigHash: configHash(cfg.Config),
+		Arch:       string(rc.TargetArch),
+		StartTime:  rc.StartTime,
+		ConfigHash: configHash(cfg),
 		PID:        os.Getpid(),
 	}
 
@@ -179,18 +277,15 @@ func writeManifest(cfg *config.RunConfig, arch config.TargetArch) error {
 		return fmt.Errorf("marshalling manifest: %w", err)
 	}
 
-	manifestPath := filepath.Join(logDir, "manifest.json")
-	return os.WriteFile(manifestPath, data, 0600)
+	return os.WriteFile(filepath.Join(logDir, "manifest.json"), data, 0600)
 }
 
-// configHash returns a simple hash of the config field names (not values).
+// configHash computes a SHA-256 hash of the marshalled config YAML (B2 fix).
 func configHash(cfg *config.Config) string {
-	// Return a hash of field names to indicate config schema version.
-	// We use a simple sorted list of field names as the "hash".
-	fields := []string{
-		"target_host", "ssh_user", "ssh_key_path", "internal_domain",
-		"cloudflare_zone_id", "bootstrap_server_ip", "lab_vlan_subnet",
-		"lab_vlan_id", "admin_email", "vault_shares", "vault_threshold",
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return "hash-error"
 	}
-	return strings.Join(fields, ",")
+	sum := sha256.Sum256(data)
+	return fmt.Sprintf("%x", sum)
 }

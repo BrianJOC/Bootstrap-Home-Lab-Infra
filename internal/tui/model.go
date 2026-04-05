@@ -31,15 +31,14 @@ type StageUpdateMsg struct {
 
 // PromptMsg is a message that triggers a prompt in the TUI.
 type PromptMsg struct {
-	Stage    string
-	Question string
+	Label    string
+	Masked   bool
 	Response chan string
 	ErrChan  chan error
 }
 
-// VerifyMsg is a message that triggers a yes/no confirmation in the TUI.
-type VerifyMsg struct {
-	Stage    string
+// ConfirmMsg is a message that triggers a yes/no confirmation in the TUI.
+type ConfirmMsg struct {
 	Message  string
 	Response chan bool
 	ErrChan  chan error
@@ -190,15 +189,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PromptMsg:
 		m.mode = "prompt"
-		m.promptMsg = fmt.Sprintf("[%s] %s", msg.Stage, msg.Question)
+		m.promptMsg = msg.Label
 		m.promptResponse = msg.Response
 		m.promptErrChan = msg.ErrChan
+		if msg.Masked {
+			m.input.EchoMode = textinput.EchoPassword
+		} else {
+			m.input.EchoMode = textinput.EchoNormal
+		}
 		m.input.Focus()
 		cmds = append(cmds, textinput.Blink)
 
-	case VerifyMsg:
+	case ConfirmMsg:
 		m.mode = "verify"
-		m.verifyMsg = fmt.Sprintf("[%s] %s (y/n)", msg.Stage, msg.Message)
+		m.verifyMsg = msg.Message + " (y/n)"
 		m.verifyResponse = msg.Response
 		m.verifyErrChan = msg.ErrChan
 
@@ -232,7 +236,7 @@ func (m Model) View() string {
 	// Build stage list.
 	var stageRows []string
 	for _, s := range m.stages {
-		stageRows = append(stageRows, renderStageRow(s.Name, s.State, s.State == "running"))
+		stageRows = append(stageRows, renderStageRow(s.Name, s.State))
 	}
 	stageContent := strings.Join(stageRows, "\n")
 	stagePane := styleStagePane.Width(stageWidth).Render(

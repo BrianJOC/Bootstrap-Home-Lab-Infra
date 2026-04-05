@@ -6,6 +6,7 @@ import (
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 )
@@ -17,7 +18,7 @@ type K3sStage struct{}
 func (s *K3sStage) Name() string { return "k3s" }
 
 // Check verifies k3s is running on the target.
-func (s *K3sStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, error) {
+func (s *K3sStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return false, err
@@ -34,7 +35,7 @@ func (s *K3sStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, erro
 }
 
 // Run deploys k3s clusters via Ansible.
-func (s *K3sStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.Sink) error {
+func (s *K3sStage) Run(_ context.Context, cfg *config.Config, _ *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return err

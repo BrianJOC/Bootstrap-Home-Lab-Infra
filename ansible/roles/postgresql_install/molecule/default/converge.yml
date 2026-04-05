@@ -7,6 +7,8 @@
       vars:
         internal_domain: home.test
         bootstrap_server_ip: "127.0.0.1"
-        admin_password: "TestPassword123!"
         pg_admin_password: "TestPgAdminPass123!"
-        # role-specific test vars
+        # Fixed test-only DB passwords — override auto-generation defaults
+        authentik_db_password: "test-authentik-db-password"
+        gitlab_db_password: "test-gitlab-db-password"
+        maas_db_password: "test-maas-db-password"

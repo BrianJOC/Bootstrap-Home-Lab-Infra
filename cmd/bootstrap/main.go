@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/homelab/bootstrap-home-infra/internal/config"
 	"github.com/homelab/bootstrap-home-infra/internal/logging"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 	"github.com/homelab/bootstrap-home-infra/internal/stages"
 	"github.com/homelab/bootstrap-home-infra/internal/tui"
@@ -62,15 +64,22 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		rc.TargetHost = flagTarget
 	}
 
-	// In headless mode, validate config strictly — all fields must be present.
+	// In headless mode (except config-collection), validate config strictly.
 	if flagHeadless && flagStage != "config-collection" {
 		if err := config.Validate(rc); err != nil {
 			return fmt.Errorf("config validation failed (headless mode requires complete config): %w", err)
 		}
 	}
 
-	// Set up logging.
-	runDir := "run-" + time.Now().UTC().Format("20060102T150405")
+	// Resolve an absolute run directory so log paths are stable regardless of
+	// working-directory changes later in the process (S6/S8).
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+	runSlug := "run-" + time.Now().UTC().Format("20060102T150405")
+	runDir := fmt.Sprintf("%s/logs/%s", cwd, runSlug)
+
 	logger, err := logging.NewLogger(runDir)
 	if err != nil {
 		return fmt.Errorf("initializing logger: %w", err)
@@ -82,14 +91,29 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 		zap.Int("pid", os.Getpid()),
 	)
 
+	logPath := runDir + "/bootstrap.log"
+	rctx := runcontext.New(runDir)
+
+	// Resolve absolute paths for config.yaml and .env so Stage 0 writes them
+	// to exactly where the operator pointed the flags, not a relative CWD path.
+	absConfig, err := filepath.Abs(flagConfig)
+	if err != nil {
+		return fmt.Errorf("resolving config path: %w", err)
+	}
+	absEnv, err := filepath.Abs(flagEnv)
+	if err != nil {
+		return fmt.Errorf("resolving env path: %w", err)
+	}
+	rctx.ConfigPath = absConfig
+	rctx.EnvPath = absEnv
+
 	// Build the stage list.
 	allStages := buildStages()
 
-	// Choose the appropriate mode.
 	if flagHeadless {
-		return runHeadless(rc, allStages, logger, flagStage)
+		return runHeadless(rc, rctx, allStages, logger, logPath, flagStage)
 	}
-	return runTUI(rc, allStages, flagStage, runDir)
+	return runTUI(rc, rctx, allStages, flagStage, logPath)
 }
 
 // buildStages returns all bootstrap stages in dependency order.
@@ -108,20 +132,20 @@ func buildStages() []stage.Stage {
 }
 
 // runHeadless runs the bootstrap without a TUI, logging to stdout.
-func runHeadless(rc *config.RunConfig, allStages []stage.Stage, logger *zap.Logger, targetStage string) error {
+func runHeadless(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage.Stage, logger *zap.Logger, logPath, targetStage string) error {
 	sink := logging.NewLogSink(logger, true)
-	runner := stage.NewRunner(allStages, sink)
+	runner := stage.NewRunner(allStages, sink, logPath)
 
 	ctx := context.Background()
 
 	if targetStage != "" {
-		return runner.RunStage(ctx, rc, targetStage)
+		return runner.RunStage(ctx, rc.Config, rc.Secrets, rctx, targetStage)
 	}
-	return runner.Run(ctx, rc)
+	return runner.Run(ctx, rc.Config, rc.Secrets, rctx)
 }
 
 // runTUI runs the bootstrap with the Bubbletea TUI.
-func runTUI(rc *config.RunConfig, allStages []stage.Stage, targetStage string, runDir string) error {
+func runTUI(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage.Stage, targetStage, logPath string) error {
 	// Build initial stage statuses.
 	statuses := make([]tui.StageStatus, len(allStages))
 	for i, s := range allStages {
@@ -131,24 +155,21 @@ func runTUI(rc *config.RunConfig, allStages []stage.Stage, targetStage string, r
 		}
 	}
 
-	logPath := fmt.Sprintf("logs/%s/bootstrap.log", runDir)
 	model := tui.New(statuses, logPath)
 	program := tea.NewProgram(model, tea.WithAltScreen())
 
-	// Create a TUI sink.
 	tuiSink := tui.NewTUISink(program)
+	runner := stage.NewRunner(allStages, tuiSink, logPath)
 
 	// Run the stages in a goroutine so the TUI can update.
 	runErrChan := make(chan error, 1)
 	go func() {
 		ctx := context.Background()
-		runner := stage.NewRunner(allStages, tuiSink)
-
 		var err error
 		if targetStage != "" {
-			err = runner.RunStage(ctx, rc, targetStage)
+			err = runner.RunStage(ctx, rc.Config, rc.Secrets, rctx, targetStage)
 		} else {
-			err = runner.Run(ctx, rc)
+			err = runner.Run(ctx, rc.Config, rc.Secrets, rctx)
 		}
 		runErrChan <- err
 		tuiSink.Quit()
@@ -161,7 +182,5 @@ func runTUI(rc *config.RunConfig, allStages []stage.Stage, targetStage string, r
 	}
 	_ = finalModel
 
-	// Check if the runner completed successfully.
-	runErr := <-runErrChan
-	return runErr
+	return <-runErrChan
 }

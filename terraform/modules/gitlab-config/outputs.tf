@@ -18,8 +18,7 @@ output "services_group_id" {
   value       = gitlab_group.services.id
 }
 
-output "runner_registration_token" {
-  description = "Registration token for the bootstrap GitLab Runner (sensitive)"
-  sensitive   = true
-  value       = gitlab_project.iac.runners_token
+output "iac_project_web_url" {
+  description = "Web URL for the infrastructure/iac project"
+  value       = gitlab_project.iac.web_url
 }

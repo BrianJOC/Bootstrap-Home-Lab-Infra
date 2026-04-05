@@ -1,4 +1,24 @@
 ---
+- name: Assert required variables are defined
+  ansible.builtin.assert:
+    that:
+      - internal_domain is defined and internal_domain != ""
+      - bootstrap_server_ip is defined and bootstrap_server_ip != ""
+      - maas_admin_password is defined and maas_admin_password != ""
+      - admin_email is defined and admin_email != ""
+    fail_msg: "maas_install requires internal_domain, bootstrap_server_ip, maas_admin_password, and admin_email"
+
+- name: Ensure ~/.bootstrap directory exists on controller
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.bootstrap"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
 # Idempotency gate: check if MAAS snap is already installed
 - name: Check if MAAS snap is installed
   ansible.builtin.command: snap list maas
@@ -14,6 +34,7 @@
   ansible.builtin.include_tasks: install.yml
   when: not maas_already_installed
 
+# configure.yml runs unconditionally — idempotent via init status check and admin user check
 - name: Configure MAAS
   ansible.builtin.include_tasks: configure.yml
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 )
@@ -17,7 +18,7 @@ type GitLabStage struct{}
 func (s *GitLabStage) Name() string { return "gitlab" }
 
 // Check verifies GitLab is running and healthy on the target.
-func (s *GitLabStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, error) {
+func (s *GitLabStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return false, err
@@ -34,7 +35,7 @@ func (s *GitLabStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, e
 }
 
 // Run deploys GitLab CE and Runner via Ansible.
-func (s *GitLabStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.Sink) error {
+func (s *GitLabStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return err
@@ -46,10 +47,10 @@ func (s *GitLabStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage
 		"ansible/playbooks/stage-6-gitlab.yml",
 		cfg.TargetHost+",",
 		map[string]string{
-			"internal_domain":        cfg.InternalDomain,
-			"bootstrap_server_ip":    cfg.BootstrapServerIP,
-			"gitlab_admin_password":  cfg.Secrets.AdminPassword,
-			"admin_email":            cfg.AdminEmail,
+			"internal_domain":       cfg.InternalDomain,
+			"bootstrap_server_ip":   cfg.BootstrapServerIP,
+			"gitlab_admin_password": sec.AdminPassword,
+			"admin_email":           cfg.AdminEmail,
 		},
 	)
 }

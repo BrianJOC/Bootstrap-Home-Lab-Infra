@@ -1,12 +1,18 @@
 ---
+- name: Assert supported architecture
+  ansible.builtin.assert:
+    that: ansible_architecture in ['x86_64', 'aarch64']
+    fail_msg: "Unsupported architecture '{{ ansible_architecture }}'. Only x86_64 and aarch64 are supported."
+
 # Map ansible_architecture to lego download arch
 - name: Set lego_arch fact
   ansible.builtin.set_fact:
     lego_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
 
-- name: Set lego download URL
+- name: Set lego download URL and checksum facts
   ansible.builtin.set_fact:
     lego_download_url: "https://github.com/go-acme/lego/releases/download/v{{ lego_version }}/lego_v{{ lego_version }}_linux_{{ lego_arch }}.tar.gz"
+    lego_checksum: "{{ lego_checksum_amd64 if lego_arch == 'amd64' else lego_checksum_arm64 }}"
 
 - name: Create temp directory for lego download
   ansible.builtin.tempfile:
@@ -18,6 +24,7 @@
   ansible.builtin.get_url:
     url: "{{ lego_download_url }}"
     dest: "{{ lego_tmp_dir.path }}/lego.tar.gz"
+    checksum: "{{ lego_checksum }}"
     mode: "0644"
 
 - name: Extract lego binary from tarball
