@@ -17,6 +17,7 @@ func completeRC() *config.RunConfig {
 			CloudflareZoneID:  "abc123",
 			BootstrapServerIP: "192.168.1.10",
 			LabVLANSubnet:     "192.168.1.0/24",
+			LabGateway:        "192.168.1.1",
 			AdminEmail:        "admin@example.com",
 			VaultShares:       5,
 			VaultThreshold:    3,

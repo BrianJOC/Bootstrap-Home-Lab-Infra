@@ -13,6 +13,7 @@ stages:
   - validate
   - plan
   - apply
+  - checkpoint
 
 # Authenticate to Vault using GitLab CI OIDC id_token (GitLab 15.7+).
 # CI_JOB_JWT_V2 was deprecated in GitLab 16 and removed in GitLab 17.
@@ -21,6 +22,13 @@ stages:
     VAULT_ID_TOKEN:
       aud: ${VAULT_ADDR}
   before_script:
+    - export TF_HTTP_ADDRESS="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/terraform/state/${TF_STATE_NAME}"
+    - export TF_HTTP_LOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_UNLOCK_ADDRESS="${TF_HTTP_ADDRESS}/lock"
+    - export TF_HTTP_LOCK_METHOD=POST
+    - export TF_HTTP_UNLOCK_METHOD=DELETE
+    - export TF_HTTP_USERNAME=gitlab-ci-token
+    - export TF_HTTP_PASSWORD="${CI_JOB_TOKEN}"
     - |
       VAULT_TOKEN=$(curl -sf \
         --request POST \
@@ -42,6 +50,7 @@ validate:
 plan:
   stage: plan
   <<: *vault_auth
+  resource_group: infrastructure-plan
   script:
     - cd $TF_ROOT
     - terraform init
@@ -63,8 +72,19 @@ apply:
     - terraform apply -auto-approve tfplan
   dependencies:
     - plan
+  resource_group: infrastructure-apply
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
       when: manual
   environment:
     name: production
+
+checkpoint:
+  stage: checkpoint
+  script:
+    - sudo /usr/local/sbin/bootstrap-gitlab-checkpoint
+  needs:
+    - apply
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  resource_group: infrastructure-apply

@@ -1,5 +1,5 @@
 storage "raft" {
-  path    = "{{ (service_data_root + '/vault') if service_data_root else '/opt/vault/data' }}"
+  path    = "{{ vault_data_dir }}"
   node_id = "bootstrap"
 }
 

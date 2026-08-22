@@ -12,7 +12,7 @@
   failed_when: false
   when: vault_binary_stat.stat.exists
   environment:
-    PATH: "/usr/local/bin:{{ ansible_env.PATH }}"
+    PATH: "/usr/local/bin:{{ ansible_facts['env']['PATH'] }}"
 
 - name: Set vault_needs_install fact
   ansible.builtin.set_fact:
@@ -21,9 +21,8 @@
          (vault_version_check.rc | default(1)) != 0 or
          (vault_version_check.stdout is defined and vault_version not in vault_version_check.stdout) }}
 
-- name: Install Vault binary
+- name: Reconcile Vault installation
   ansible.builtin.include_tasks: install.yml
-  when: vault_needs_install
 
 - name: Configure Vault
   ansible.builtin.include_tasks: configure.yml

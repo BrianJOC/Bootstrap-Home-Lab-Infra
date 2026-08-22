@@ -1,0 +1,9 @@
+[Unit]
+Description=Copy verified snapshots to USB when the repository is attached
+
+[Timer]
+OnCalendar={{ 'weekly' if backup_usb_copy_interval == 'weekly' else 'monthly' }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

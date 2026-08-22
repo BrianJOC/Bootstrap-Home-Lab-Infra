@@ -1,0 +1,9 @@
+[Unit]
+Description=Copy verified Restic snapshots to the offline USB repository
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bootstrap-backup-copy-usb
+PrivateTmp=yes
+ProtectHome=yes

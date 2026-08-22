@@ -93,3 +93,91 @@
     dest: "{{ cert_dir }}/certificates/meta.json"
     mode: "0644"
   when: not cert_valid
+
+- name: Create immutable certificate version root
+  ansible.builtin.file:
+    path: "{{ cert_dir }}/{{ internal_domain }}/versions"
+    state: directory
+    mode: "0700"
+
+- name: Inspect stable certificate directory
+  ansible.builtin.stat:
+    path: "{{ cert_dir }}/certificates"
+    follow: false
+  register: stable_certificate_directory
+
+- name: Adopt the initially issued certificate as an immutable version
+  when:
+    - stable_certificate_directory.stat.exists
+    - not stable_certificate_directory.stat.islnk
+  block:
+    - name: Create initial immutable version
+      ansible.builtin.command:
+        cmd: >-
+          cp -a {{ cert_dir }}/certificates
+          {{ cert_dir }}/{{ internal_domain }}/versions/initial
+        creates: "{{ cert_dir }}/{{ internal_domain }}/versions/initial"
+
+    - name: Point current at the initial version
+      ansible.builtin.file:
+        src: versions/initial
+        dest: "{{ cert_dir }}/{{ internal_domain }}/current"
+        state: link
+        force: true
+
+    - name: Remove mutable initial certificate directory after copying
+      ansible.builtin.file:
+        path: "{{ cert_dir }}/certificates"
+        state: absent
+
+    - name: Create stable certificate symlink
+      ansible.builtin.file:
+        src: "{{ cert_dir }}/{{ internal_domain }}/current/certificates"
+        dest: "{{ cert_dir }}/certificates"
+        state: link
+
+- name: Create protected bootstrap secret directory
+  ansible.builtin.file:
+    path: /etc/bootstrap-home-infra
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  when: certificate_renewal_enabled | bool
+
+- name: Store the scoped Cloudflare token for sealed-Vault renewal
+  ansible.builtin.copy:
+    content: "{{ cf_dns_api_token }}"
+    dest: /etc/bootstrap-home-infra/cloudflare-dns-token
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  when: certificate_renewal_enabled | bool
+
+- name: Install certificate renewal implementation
+  ansible.builtin.template:
+    src: bootstrap-renew-certificate.sh.j2
+    dest: /usr/local/sbin/bootstrap-renew-certificate
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install certificate renewal service
+  ansible.builtin.template:
+    src: bootstrap-certificate-renew.service.j2
+    dest: /etc/systemd/system/bootstrap-certificate-renew.service
+    mode: "0644"
+
+- name: Install certificate renewal timer
+  ansible.builtin.template:
+    src: bootstrap-certificate-renew.timer.j2
+    dest: /etc/systemd/system/bootstrap-certificate-renew.timer
+    mode: "0644"
+
+- name: Apply certificate renewal timer policy
+  ansible.builtin.systemd:
+    name: bootstrap-certificate-renew.timer
+    enabled: "{{ certificate_renewal_enabled | bool }}"
+    state: "{{ 'started' if certificate_renewal_enabled | bool else 'stopped' }}"
+    daemon_reload: true

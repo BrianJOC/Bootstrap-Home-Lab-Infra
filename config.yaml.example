@@ -1,6 +1,8 @@
 # config.yaml — Bootstrap configuration
 # Copy to config.yaml and fill in your values.
-# Secrets (CF_DNS_API_TOKEN, BOOTSTRAP_ADMIN_PASSWORD) go in .env, not here.
+# Secrets (CF_DNS_API_TOKEN, BOOTSTRAP_ADMIN_PASSWORD, optional Restic,
+# controller-recovery, and paging credentials) go in .env/protected runtime
+# files, not here.
 
 # ── Required fields ─────────────────────────────────────────────────────────
 
@@ -13,11 +15,24 @@ ssh_user: "ubuntu"
 # Path to your SSH private key
 ssh_key_path: "/home/user/.ssh/id_ed25519"
 
-# Internal DNS domain (e.g. home.lab, homelab.internal)
-internal_domain: "home.lab"
+# Optional expected SHA-256 SSH host-key fingerprint. When set, first use and
+# any explicit headless replacement must match exactly.
+# ssh_host_fingerprint: "SHA256:base64-fingerprint"
+
+# A delegated subdomain of a public domain you control. DNS remains private,
+# but public DNS ownership is required for browser-trusted ACME certificates.
+internal_domain: "home.example.com"
 
 # Cloudflare Zone ID for your domain (used for DNS-01 TLS challenge)
 cloudflare_zone_id: "your-zone-id-here"
+
+# Automatic TLS renewal is host-managed so it continues if GitLab is down or
+# Vault is sealed. The Cloudflare token remains in a root-owned mode 0600 runtime
+# secret file and never enters this structural configuration.
+# certificate_renewal_enabled: true
+# certificate_renewal_on_calendar: "daily"
+# certificate_renew_before_days: 30
+# certificate_renewal_randomized_delay: "1h"
 
 # IP of the bootstrap server itself (used for service binding and pg_hba)
 bootstrap_server_ip: "192.168.1.100"
@@ -25,21 +40,131 @@ bootstrap_server_ip: "192.168.1.100"
 # VLAN subnet for the lab network
 lab_vlan_subnet: "10.0.0.0/24"
 
+# Gateway address on the lab network
+lab_gateway: "10.0.0.1"
+
 # Admin email (used for ACME registration and Authentik admin account)
 admin_email: "admin@example.com"
 
-# Path where Vault init output (unseal keys + root token) will be written.
-# Store this securely — it is not committed to version control.
-vault_init_output_path: "./vault-init.json"
+# Absolute path outside the repository where Vault init output (unseal keys +
+# root token) will be written. Back this file up in a password manager or
+# another secure location.
+vault_init_output_path: "/home/user/.local/share/bootstrap-home-infra/recovery/vault-init.json"
 
 # ── Optional fields ──────────────────────────────────────────────────────────
 
 # VLAN ID (0 = untagged)
 # lab_vlan_id: 0
 
+# Target interface that receives the lab VLAN
+# lab_vlan_interface: "enp1s0"
+
+# MAAS dynamic range. Required only when MAAS DHCP is explicitly enabled.
+# dhcp_range_low: "10.0.0.100"
+# dhcp_range_high: "10.0.0.199"
+#
+# MAAS is installed with DHCP disabled by default. Enabling this initiates an
+# interactive cutover for the dedicated lab VLAN; it never changes UniFi.
+# maas_dhcp_enabled: false
+
+# ── Backup and recovery ─────────────────────────────────────────────────────
+#
+# The wizard recommends encrypted nightly Restic backups but allows this feature
+# to be skipped. When enabled, backup_repository is required and must resolve to
+# a validated Restic repository; headless mode never invents this path.
+#
+# backup_enabled: false  # Supported "trial mode"; enable later without reinstall
+# backup_repository: "/mnt/truenas-backups/restic"
+#
+# Friendly presets accepted by the wizard: daily, weekly, or custom. Structural
+# config stores a systemd OnCalendar value. Default: every day at 02:30 local.
+# backup_on_calendar: "*-*-* 02:30:00"
+#
+# Retention defaults. Any class may be set to 0 to disable that class.
+# backup_keep_daily: 7
+# backup_keep_weekly: 5
+# backup_keep_monthly: 12
+#
+# Integrity check intervals: disabled, weekly, or monthly.
+# backup_metadata_check_interval: "weekly"
+# backup_full_check_interval: "monthly"
+#
+# Optional removable, offline repository. Default is disabled. Because the USB
+# device should normally be disconnected, "monthly" is a reminder/copy cadence,
+# not permission to treat an absent device as a failed NAS backup.
+# backup_usb_enabled: false
+# backup_usb_repository: "/mnt/backup-usb/restic"
+# backup_usb_copy_interval: "monthly"  # manual | weekly | monthly
+#
+# Restore drill reminder: disabled, monthly, or quarterly.
+# backup_restore_drill_interval: "quarterly"
+#
+# GitLab joins the nightly full set. Successful infrastructure applies also
+# create an encrypted critical Git/state checkpoint in the primary repository.
+# gitlab_full_backup_on_calendar: "*-*-* 02:30:00"
+# gitlab_checkpoint_after_apply: true
+# gitlab_freeze_iac_when_unavailable: true
+#
+# A portable controller-recovery bundle is refreshed after important changes
+# and included in nightly and post-apply Restic checkpoints. The controller SSH
+# key is separately encrypted with CONTROLLER_RECOVERY_PASSWORD from .env; Vault
+# Shamir shares and vault-init.json are never included automatically.
+# controller_recovery_enabled: true
+# controller_recovery_refresh_after_change: true
+# controller_recovery_include_ssh_private_key: true
+
+# ── Upgrades and maintenance ────────────────────────────────────────────────
+#
+# Ubuntu security patches install automatically. Application proposals remain
+# pinned for review until their class deadline, then become policy-approved for
+# the next window. Automatic approval never bypasses safety gates.
+# application_upgrades_enabled: true
+# upgrade_maintenance_on_calendar: "Sun *-*-* 03:00:00"
+# upgrade_maintenance_admission_window: "3h"
+# upgrade_critical_security_deadline: "3d"
+# upgrade_security_deadline: "7d"
+# upgrade_patch_minor_deadline: "21d"
+# upgrade_major_deadline: "30d"
+#
+# The host records reboot-required status but never reboots automatically.
+# os_security_updates_enabled: true
+# os_automatic_reboot: false
+
+# ── Constrained observability and paging ────────────────────────────────────
+#
+# Uptime Kuma and Beszel run on the target host. TrueNAS is storage-only.
+# monitoring_enabled: true
+# uptime_critical_interval: "60s"
+# uptime_standard_interval: "5m"
+# uptime_retention_days: 7
+# journal_retention_days: 7
+# observability_memory_limit_mb: 512
+# observability_cpu_quota_percent: 50
+# observability_storage_limit_gb: 5
+#
+# Paging is independent of dashboard monitoring. Provider credentials belong in
+# .env / protected runtime files, never this structural configuration.
+# paging_enabled: false
+# paging_provider: "discord"  # discord | telegram | ntfy | webhook
+# paging_critical_failures: 3
+# paging_standard_failures: 3
+# paging_resource_sustain: "15m"
+# paging_disk_warning_percent: 85
+# paging_disk_critical_percent: 95
+# paging_unresolved_reminder: "6h"
+# paging_recovery_notifications: true
+
 # Vault Shamir secret sharing parameters (defaults: 5 shares, threshold 3)
 # vault_shares: 5
 # vault_threshold: 3
+
+# ── Initial k3s cluster ─────────────────────────────────────────────────────
+#
+# The bootstrap target can form a pinned, single-node control plane. Ansible
+# owns installation; Terraform only registers the verified cluster for GitOps.
+# k3s_enabled: true
+# k3s_cluster_name: "bootstrap"
+# k3s_version: "v1.29.0+k3s1"
 
 # ── Secondary disk (Raspberry Pi SSD hat, or any secondary block device) ────
 #

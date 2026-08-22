@@ -1,0 +1,10 @@
+[Unit]
+Description=Open the configured application maintenance window
+
+[Timer]
+OnCalendar={{ upgrade_maintenance_on_calendar }}
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

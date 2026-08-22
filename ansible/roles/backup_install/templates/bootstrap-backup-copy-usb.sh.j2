@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec 9>/run/lock/bootstrap-backup.lock
+flock -n 9 || exit 0
+
+primary_repo={{ backup_repository | quote }}
+usb_repo={{ backup_usb_repository | quote }}
+primary_password=/etc/bootstrap-home-infra/backup/restic-primary-password
+usb_password=/etc/bootstrap-home-infra/backup/restic-usb-password
+
+if [[ "$usb_repo" == /mnt/* ]]; then
+  findmnt --target "$usb_repo" >/dev/null
+fi
+expected="$(< /etc/bootstrap-home-infra/backup/usb-repository-id)"
+actual="$(RESTIC_REPOSITORY="$usb_repo" RESTIC_PASSWORD_FILE="$usb_password" restic cat config | sha256sum | awk '{print $1}')"
+test "$actual" = "$expected"
+
+RESTIC_REPOSITORY="$usb_repo" RESTIC_PASSWORD_FILE="$usb_password" \
+  restic copy --from-repo "$primary_repo" --from-password-file "$primary_password"
+RESTIC_REPOSITORY="$usb_repo" RESTIC_PASSWORD_FILE="$usb_password" restic check
+printf 'finished=%s\n' "$(date -u +%FT%TZ)" > /var/lib/bootstrap-home-infra/usb-copy-status

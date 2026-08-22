@@ -1,0 +1,10 @@
+{
+  "maintenance_admission_window": {{ upgrade_maintenance_admission_window | to_json }},
+  "deadlines": {
+    "critical-security": {{ upgrade_critical_security_deadline | to_json }},
+    "security": {{ upgrade_security_deadline | to_json }},
+    "patch-minor": {{ upgrade_patch_minor_deadline | to_json }},
+    "major": {{ upgrade_major_deadline | to_json }}
+  },
+  "automatic_reboot": {{ os_automatic_reboot | bool | lower }}
+}

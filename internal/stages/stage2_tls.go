@@ -23,19 +23,25 @@ func (s *TLSStage) Name() string { return "tls" }
 const tlsRenewThreshold = 2592000
 
 // Check verifies a valid certificate already exists on the target.
-func (s *TLSStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+func (s *TLSStage) Check(_ context.Context, cfg *config.Config, rc *runcontext.RunContext) (bool, error) {
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return false, fmt.Errorf("connecting to target: %w", err)
 	}
 	defer client.Close()
 
-	// Check if cert exists and has > 30 days remaining.
+	// Check if cert exists and has > 30 days remaining. When renewal is enabled,
+	// also require the host timer so an existing certificate cannot skip
+	// lifecycle installation.
 	// lego stores wildcard certs with '*' replaced by '_' in the filename.
 	certPath := fmt.Sprintf("/opt/certs/certificates/_.%s.crt", cfg.InternalDomain)
+	timerCheck := "true"
+	if cfg.CertificateRenewalEnabled {
+		timerCheck = "systemctl is-enabled --quiet bootstrap-certificate-renew.timer"
+	}
 	stdout, _, err := client.Run(fmt.Sprintf(
-		`test -f %q && openssl x509 -noout -checkend %d -in %q 2>/dev/null && echo valid || echo missing`,
-		certPath, tlsRenewThreshold, certPath,
+		`test -f %q && openssl x509 -noout -checkend %d -in %q 2>/dev/null && %s && echo valid || echo missing`,
+		certPath, tlsRenewThreshold, certPath, timerCheck,
 	))
 	if err != nil {
 		return false, fmt.Errorf("checking certificate on target: %w", err)
@@ -44,8 +50,8 @@ func (s *TLSStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.Ru
 }
 
 // Run issues a wildcard TLS certificate via Cloudflare DNS-01.
-func (s *TLSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+func (s *TLSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, rc *runcontext.RunContext, sink stage.Sink) error {
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return err
 	}
@@ -67,13 +73,17 @@ func (s *TLSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secret
 		"ansible/playbooks/stage-2-tls.yml",
 		cfg.TargetHost+",",
 		map[string]string{
-			"internal_domain":         cfg.InternalDomain,
-			"cloudflare_zone_id":      cfg.CloudflareZoneID,
-			"admin_email":             cfg.AdminEmail,
-			"acme_server_url":         cfg.ACMEServerURL,
-			"cf_dns_api_token":        sec.CloudflareAPIToken,
-			"lego_dns_provider":       dnsProvider,
-			"lego_httpreq_endpoint":   httpreqEndpoint,
+			"internal_domain":                      cfg.InternalDomain,
+			"cloudflare_zone_id":                   cfg.CloudflareZoneID,
+			"admin_email":                          cfg.AdminEmail,
+			"acme_server_url":                      cfg.ACMEServerURL,
+			"cf_dns_api_token":                     sec.CloudflareAPIToken,
+			"lego_dns_provider":                    dnsProvider,
+			"lego_httpreq_endpoint":                httpreqEndpoint,
+			"certificate_renewal_enabled":          fmt.Sprintf("%t", cfg.CertificateRenewalEnabled),
+			"certificate_renewal_on_calendar":      cfg.CertificateRenewalOnCalendar,
+			"certificate_renew_before_days":        intToStr(cfg.CertificateRenewBeforeDays),
+			"certificate_renewal_randomized_delay": cfg.CertificateRenewalRandomizedDelay,
 		},
 	)
 }

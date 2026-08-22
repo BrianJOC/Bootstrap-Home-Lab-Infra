@@ -2,8 +2,8 @@ terraform {
   required_version = ">= 1.6"
   required_providers {
     maas = {
-      source  = "maas/maas"
-      version = "~> 2.3"
+      source  = "canonical/maas"
+      version = "~> 2.8.0"
     }
   }
 }
@@ -40,11 +40,14 @@ resource "maas_subnet" "lab" {
   gateway_ip  = var.lab_gateway
   dns_servers = [var.dns_server]
 
-  ip_ranges {
-    type     = "dynamic"
-    start_ip = var.dhcp_range_low
-    end_ip   = var.dhcp_range_high
-    comment  = "MAAS-managed DHCP dynamic range for lab VLAN"
+  dynamic "ip_ranges" {
+    for_each = var.maas_dhcp_enabled ? [1] : []
+    content {
+      type     = "dynamic"
+      start_ip = var.dhcp_range_low
+      end_ip   = var.dhcp_range_high
+      comment  = "MAAS-managed DHCP dynamic range for the explicitly approved lab VLAN"
+    }
   }
 }
 

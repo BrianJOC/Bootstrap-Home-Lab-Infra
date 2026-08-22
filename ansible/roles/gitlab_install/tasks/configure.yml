@@ -1,5 +1,4 @@
 ---
-# Wait for GitLab health endpoint to respond
 - name: Wait for GitLab to become healthy
   ansible.builtin.uri:
     url: "https://localhost/-/health"
@@ -11,10 +10,10 @@
   delay: "{{ gitlab_health_interval }}"
   until: gitlab_health.status == 200
 
-# Create bootstrap API token via gitlab-rails runner (idempotent via controller-side token file).
-# GitLab 16+ removed password-based API authentication, so we use the Rails console to mint
-# a PAT on first run and persist it on the controller for subsequent idempotent runs.
-- name: Check if GitLab bootstrap API token exists on controller
+# The bootstrap PAT is controller-only and short-lived. Terraform uses it to
+# create durable groups/projects from their first creation; Ansible does not
+# create or import those API objects.
+- name: Check for the controller GitLab bootstrap token
   ansible.builtin.stat:
     path: "{{ lookup('env', 'HOME') }}/.bootstrap/gitlab-api-token"
   delegate_to: localhost
@@ -24,29 +23,26 @@
   become: false
   register: gitlab_token_file
 
-# Create infrastructure and services groups via API
-- name: Create GitLab bootstrap API token via gitlab-rails runner
+- name: Mint a short-lived GitLab bootstrap API token
   ansible.builtin.command:
     argv:
       - gitlab-rails
       - runner
       - >-
         t = User.find(1).personal_access_tokens.create!(
-          name: 'bootstrap-ansible-token',
+          name: 'bootstrap-terraform-token',
           scopes: ['api'],
-          expires_at: 30.days.from_now
+          expires_at: 2.days.from_now
         ); puts t.token
   register: gitlab_token_create
   changed_when: true
-  # gitlab-rails runner exits 0 even on Ruby exceptions — validate the token format.
-  # GitLab 16+ PATs are "glpat-" followed by 20 alphanumeric chars.
   failed_when: >
     gitlab_token_create.rc != 0 or
-    not (gitlab_token_create.stdout | trim is match('^glpat-[A-Za-z0-9_-]{20}$'))
+    not (gitlab_token_create.stdout | trim is match('^glpat-[A-Za-z0-9_-]{16,128}$'))
   no_log: true
   when: not gitlab_token_file.stat.exists
 
-- name: Store GitLab bootstrap API token on controller
+- name: Store the GitLab bootstrap API token on the controller
   ansible.builtin.copy:
     content: "{{ gitlab_token_create.stdout | trim }}"
     dest: "{{ lookup('env', 'HOME') }}/.bootstrap/gitlab-api-token"
@@ -59,7 +55,7 @@
   no_log: true
   when: not gitlab_token_file.stat.exists
 
-- name: Read GitLab bootstrap API token from controller
+- name: Read the GitLab bootstrap API token
   ansible.builtin.slurp:
     src: "{{ lookup('env', 'HOME') }}/.bootstrap/gitlab-api-token"
   delegate_to: localhost
@@ -70,123 +66,10 @@
   register: gitlab_token_slurp
   no_log: true
 
-- name: Set gitlab_api_token fact
+- name: Set the transient GitLab API token fact
   ansible.builtin.set_fact:
     gitlab_api_token: "{{ gitlab_token_slurp.content | b64decode | trim }}"
   no_log: true
 
-# GET tasks omit no_log — responses contain only non-sensitive group/project metadata,
-# and no_log on registered uri results empties .json, breaking all subsequent selectattr checks.
-- name: Check if infrastructure group exists
-  ansible.builtin.uri:
-    url: "https://localhost/api/v4/groups?search=infrastructure"
-    method: GET
-    headers:
-      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
-    status_code: [200]
-  register: infra_group_check
-
-- name: Create infrastructure group
-  ansible.builtin.uri:
-    url: "https://localhost/api/v4/groups"
-    method: POST
-    body_format: json
-    body:
-      name: infrastructure
-      path: infrastructure
-      visibility: private
-    headers:
-      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
-    status_code: [201]
-  when: >
-    infra_group_check.json | selectattr('path', 'equalto', 'infrastructure') | list | length == 0
-  register: infra_group_create
-  no_log: true
-
-# Derive the infrastructure group ID from the check result (group existed) or from the
-# create result (just created), then fail early if neither resolved — avoids a cryptic
-# StopIteration crash from `| first` on an empty list in the project creation task.
-- name: Set infrastructure group ID from existing group
-  ansible.builtin.set_fact:
-    infra_group_id: >-
-      {{ (infra_group_check.json | selectattr('path', 'equalto', 'infrastructure') | list | first).id }}
-  when: infra_group_check.json | selectattr('path', 'equalto', 'infrastructure') | list | length > 0
-
-- name: Set infrastructure group ID from newly created group
-  ansible.builtin.set_fact:
-    infra_group_id: "{{ infra_group_create.json.id }}"
-  when:
-    - infra_group_id is not defined
-    - infra_group_create is defined
-    - infra_group_create.json is defined
-
-- name: Assert infrastructure group ID is resolved
-  ansible.builtin.assert:
-    that: infra_group_id is defined
-    fail_msg: "Could not determine infrastructure group ID — group not found and not created"
-
-- name: Check if services group exists
-  ansible.builtin.uri:
-    url: "https://localhost/api/v4/groups?search=services"
-    method: GET
-    headers:
-      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
-    status_code: [200]
-  register: services_group_check
-
-- name: Create services group
-  ansible.builtin.uri:
-    url: "https://localhost/api/v4/groups"
-    method: POST
-    body_format: json
-    body:
-      name: services
-      path: services
-      visibility: private
-    headers:
-      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
-    status_code: [201]
-  when: >
-    services_group_check.json | selectattr('path', 'equalto', 'services') | list | length == 0
-  register: services_group_create
-  no_log: true
-
-# Create infrastructure/iac project
-- name: Check if infrastructure/iac project exists
-  ansible.builtin.uri:
-    url: "https://localhost/api/v4/projects?search=iac"
-    method: GET
-    headers:
-      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
-    status_code: [200]
-  register: iac_project_check
-
-- name: Create infrastructure/iac project
-  ansible.builtin.uri:
-    url: "https://localhost/api/v4/projects"
-    method: POST
-    body_format: json
-    body:
-      name: iac
-      path: iac
-      namespace_id: "{{ infra_group_id }}"
-      visibility: private
-      initialize_with_readme: true
-    headers:
-      PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
-    status_code: [201]
-  when: >
-    iac_project_check.json |
-    selectattr('path_with_namespace', 'equalto', 'infrastructure/iac') | list | length == 0
-  no_log: true
-  register: iac_project_create
-
-# Register GitLab Runner
-- name: Include runner registration tasks
+- name: Register the host-managed GitLab Runner
   ansible.builtin.include_tasks: runner.yml

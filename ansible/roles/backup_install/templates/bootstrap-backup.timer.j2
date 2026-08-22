@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule application-consistent homelab backups
+
+[Timer]
+OnCalendar={{ backup_on_calendar }}
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

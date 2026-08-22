@@ -33,7 +33,7 @@ No test may produce a password prompt. Every test must complete unattended once 
 ### Global Invariants (carried through every spec)
 
 1. Any stage that touches Vault must assert Vault is unsealed before proceeding
-2. Config is split: `config.yaml` holds non-sensitive structural config (domain, IPs, VLAN settings, SSH key path, Vault share counts); `.env` holds secrets (Cloudflare token, admin passwords, tokens). Secrets are loaded into process environment at runtime — never written to logs, TUI plaintext, or `config.yaml`
+2. Config is split: `config.yaml` holds non-sensitive structural config (domain, IPs, VLAN settings, SSH key path, Vault share counts); `.env` holds bootstrap secrets (Cloudflare token, admin passwords, tokens) with mode `0600`. Secrets never appear in logs, TUI plaintext, process arguments, git, or `config.yaml`. Per ADR-009, core host services may retain minimum root-owned mode `0600` runtime copies
 3. Every stage begins with an idempotency gate: check whether target state exists; skip creation if it does
 4. Every `[AUTO]` failure emits to both TUI error panel and log file with absolute path and line reference: `see: <abs-path>/logs/run-<timestamp>/bootstrap.log:<line>`
 5. DNS resolution and port reachability are explicit numbered checks, never assumed
@@ -41,6 +41,24 @@ No test may produce a password prompt. Every test must complete unattended once 
 7. `vault-init.json` write failure is a hard halt — no recovery path discards unseal keys
 8. Every Ansible role and binary selection must branch on detected arch (x86_64 or aarch64)
 9. Tests never call real external APIs. Stage 2 uses Pebble (`ACME_SERVER_URL`) and a Cloudflare API mock (`CLOUDFLARE_API_BASE_URL`). Both overrides must be supported by the bootstrap tool from initial design — not retrofitted
+10. Every managed resource has exactly one lifecycle owner as defined in `docs/resource-ownership.md`: Ansible owns host/runtime lifecycle, Terraform owns durable service API objects, and Go owns orchestration
+11. Interactive Terraform applies require approval of a displayed saved plan. Headless mutation requires the explicit `--approve-terraform` flag
+12. Clean bootstrap never imports Terraform-owned resources; an unexpected pre-existing resource stops the stage and routes to a separate brownfield adoption workflow
+13. Go and Ansible use the same pinned SSH host identity. No authentication or remote command occurs before first-use acceptance or configured fingerprint verification succeeds
+14. Backup defaults are displayed before acceptance. `backup_enabled: false`
+    is supported, all intervals are configurable, and no headless run infers a
+    repository path. Backup operations validate destination mount and repository
+    identity before writing, pruning, copying, or restoring
+15. After reboot, core services may start from protected runtime credentials
+    while Vault is sealed. Platform health remains degraded and Vault-dependent
+    operations fail closed until masked manual unseal and reconciliation complete
+16. Monitoring runs only on the target within configured CPU, memory, disk, and
+    retention bounds. Paging is optional and a full target outage is explicitly
+    outside local paging coverage. TrueNAS performs storage only
+17. Controller reconstruction verifies a portable bundle and target identity,
+    completes a mutation-free audit, and requires explicit adoption. Restic
+    credentials alone cannot decrypt the backed-up controller SSH key, and
+    Vault init or Shamir material is never automatically included
 
 ---
 
@@ -59,11 +77,21 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 | Target host IP or hostname | Operator (TUI prompt or `--target` flag) | Yes | Must be SSH-reachable |
 | SSH user | Operator (TUI prompt, default `ubuntu`) | Yes | Must have passwordless sudo |
 | SSH key path | Operator (TUI prompt, default `~/.ssh/id_ed25519`) | Yes | Path only — key never written to config |
+| Expected SSH host fingerprint | `config.yaml` or TUI | No | SHA-256 fingerprint; when supplied, observed key must match |
 | Internal domain | Operator (TUI prompt) | Yes | e.g. `home.example.com`; used for all DNS and TLS |
 | Cloudflare zone ID | Operator (TUI prompt) | Yes | Zone for internal domain |
 | Bootstrap server static IP | Operator (TUI prompt) | Yes | Used for DNS records and Vault listener |
-| Lab VLAN subnet (CIDR) | Operator (TUI prompt) | Yes | MAAS will manage DHCP on this segment |
-| Lab VLAN ID | Operator (TUI prompt) | Yes | VLAN ID configured on Unifi |
+| Lab VLAN subnet (CIDR) | Operator (TUI prompt) | Yes | Network boundary; does not imply DHCP ownership |
+| Lab gateway | Operator (TUI prompt) | Yes | Must be contained by the lab subnet |
+| Lab VLAN ID | Operator (TUI prompt) | Yes | VLAN ID configured on UniFi |
+| Lab VLAN interface | Operator (TUI prompt) | Conditional | Required only when MAAS DHCP is enabled |
+| MAAS DHCP range | Operator (TUI prompt) | Conditional | Required only when MAAS DHCP is enabled |
+| MAAS DHCP enabled | Operator (TUI prompt, default `false`) | No | Explicitly starts the dedicated-VLAN cutover |
+| Backup enabled and repository | Operator (TUI prompt) | No | Wizard recommends enabled; repository required only when enabled |
+| Backup/verification/USB intervals | Operator (TUI prompt) | No | Visible defaults from `docs/backup-recovery.md`; each is customizable or disabled |
+| Controller recovery options | Operator (TUI prompt) | No | Defaults to enabled, refresh after material changes, and separately encrypted SSH-key inclusion |
+| Monitoring intervals, retention, and resource budget | Operator (TUI prompt) | No | Defaults from `docs/observability.md`; target-local only |
+| Paging enabled, provider, and thresholds | Operator (TUI prompt) | No | Recommended but defaults disabled until a destination test succeeds |
 | Admin email | Operator (TUI prompt) | Yes | Used for Vault, GitLab, Authentik admin accounts |
 | Vault unseal shares count | Operator (TUI prompt, default `5`) | Yes | Minimum `3` |
 | Vault unseal threshold | Operator (TUI prompt, default `3`) | Yes | Must be <= shares count |
@@ -73,8 +101,12 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 
 | Input | Env var | Required | Notes |
 |-------|---------|----------|-------|
-| Cloudflare API token | `CF_DNS_API_TOKEN` | Yes | Never written to disk or logs |
-| Initial admin password | `BOOTSTRAP_ADMIN_PASSWORD` | Yes | Must meet minimum strength; never written to disk |
+| Cloudflare API token | `CF_DNS_API_TOKEN` | Yes | Stored only in mode `0600` `.env`; never written to logs or process arguments |
+| Initial admin password | `BOOTSTRAP_ADMIN_PASSWORD` | Yes | Must meet minimum strength; stored only in mode `0600` `.env`; never logged |
+| Primary Restic password | `RESTIC_PRIMARY_PASSWORD` | Conditional | Required only when primary backup is enabled |
+| USB Restic password | `RESTIC_USB_PASSWORD` | Conditional | Required only when removable repository is enabled |
+| Controller recovery password | `CONTROLLER_RECOVERY_PASSWORD` | Conditional | Required when the controller bundle includes the SSH private key; distinct from Restic passwords |
+| Paging destination credential | `PAGING_DESTINATION_URL` | Conditional | Required only when paging is enabled; protected and test-validated |
 | Existing `.env` | Filesystem at `./.env` | No | If present, values loaded; operator reviews masked before proceeding |
 
 ### Outputs / Postconditions
@@ -88,6 +120,7 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 7. Target OS is confirmed as Ubuntu >= 22.04
 8. TUI log contains: `[INFO] stage=config-collection status=complete`
 9. Log file contains: `[INFO] bootstrap started; target=<ip>; pid=<pid>`, `[INFO] config written; path=./config.yaml`, `[INFO] env written; path=./.env`
+10. The target host key is pinned in the bootstrap-owned known-hosts file and the run manifest records its algorithm and SHA-256 fingerprint
 
 ### Acceptance Criteria
 
@@ -105,6 +138,14 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 12. `.env` file has mode `0600` immediately after write; bootstrap exits with error if it detects mode is wider
 13. TUI displays all required observable states in order
 14. `./logs/run-<timestamp>/manifest.json` contains a config hash (not values) and start time ISO timestamp
+15. First connection displays target, resolved address, key algorithm, and SHA-256 fingerprint; acceptance pins the key and reconnects with strict verification before authentication
+16. A changed key displays the old and new fingerprints and requires the operator to confirm an intentional reinstall/replacement by typing the target; successful replacement is atomic and followed by a strict reconnect
+17. Headless mode never replaces a changed pin unless both `--replace-host-key` and a matching configured `ssh_host_fingerprint` are supplied
+18. The backup screen shows effective destinations, schedules, retention, checks,
+    and restore reminder; the operator can accept, edit, or set
+    `backup_enabled: false`
+19. Headless mode with backups enabled but no repository or primary password
+    fails naming the missing field; disabled backups require neither
 
 ### Failure Modes
 
@@ -115,6 +156,8 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 | Input validation failure | Inline TUI validation on field exit | Re-prompt failed field only; retain all other values |
 | SSH connection refused | TCP connect to port 22 times out or RST within 10s | Emit specific error; `[PROMPT]` for corrected host/user/key; retry |
 | SSH auth failure | SSH handshake succeeds but key rejected | Emit "auth failure"; `[PROMPT]` for corrected key path; retry |
+| Unknown SSH host key | No existing pin and no configured expected fingerprint | Interactive fingerprint confirmation; headless requires expected fingerprint or `--accept-new-host-key` |
+| Changed SSH host key | Observed fingerprint differs from pin | Stop before authentication; interactive replacement flow or strict headless requirements from `docs/ssh-host-trust.md` |
 | `uname -m` fails | Non-zero SSH exit code | Warn; operator prompted to confirm arch manually or abort |
 | OS version check fails | `lsb_release` output does not match Ubuntu >= 22.04 | `[VERIFY]` warning; operator can continue at own risk or abort |
 | `.env` write fails (permissions) | Non-zero write return | Emit error with path; abort stage |
@@ -142,6 +185,9 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 
 - **SSH refused**: non-existent target IP; assert error names "connection refused"; re-prompts host
 - **SSH auth failure**: wrong private key; assert "auth failure" error; re-prompts key path
+- **Unknown SSH key rejected**: decline first-use confirmation; assert no pin is written and no authentication is attempted
+- **Changed SSH key accepted**: simulate a reinstall; assert old/new fingerprints shown, typed target required, entry replaced atomically, and strict reconnect succeeds
+- **Changed SSH key rejected**: cancel replacement; assert old pin remains byte-for-byte unchanged and no authentication is attempted
 - **Malformed `config.yaml`**: write invalid YAML before run; assert parse error with file path; operator prompted to fix or delete
 - **Weak password**: password below minimum strength; assert inline validation error on that field only
 - **OS mismatch**: Ubuntu 20.04 QEMU VM; assert `[VERIFY]` warning; assert both continue and abort paths work
@@ -161,7 +207,14 @@ Stage 0 is the entry point for every bootstrap run. It collects all required con
 
 ### Summary
 
-Stage 1 deploys Technitium DNS on the target host and configures it as the authoritative resolver for the internal domain. It creates the DNS zone for `home.<domain>` and A records for all bootstrap service hostnames. The target host's resolver is reconfigured to use the local Technitium instance. All subsequent stages depend on internal DNS resolution; without Stage 1, no service hostname resolves and TLS validation cannot proceed. The Ansible role `roles/technitium_dns` performs installation and Docker deployment.
+Stage 1 deploys Technitium DNS on the target host and configures it as the
+authoritative resolver for the internal domain. Ansible owns the container and
+host resolver integration; the bootstrap DNS Terraform root owns the zone and A
+records from first creation. The target host starts using the local resolver only
+after private and external queries pass. Existing router, DHCP, and non-lab
+client settings are not changed. All subsequent stages depend on internal DNS
+resolution. The staged cutover contract is in
+[`docs/network-cutover.md`](network-cutover.md).
 
 ### Inputs
 
@@ -170,28 +223,34 @@ Stage 1 deploys Technitium DNS on the target host and configures it as the autho
 | `config.yaml` | Stage 0 output | Yes | Must be valid and loaded |
 | `config.internal_domain` | `config.yaml` | Yes | e.g. `home.example.com` |
 | `config.bootstrap_server_ip` | `config.yaml` | Yes | IP Technitium binds to; used for all A records |
-| `BOOTSTRAP_ADMIN_PASSWORD` | `.env` (runtime env) | Yes | Technitium API authentication; never written to disk |
+| Current target resolver configuration | Stage 1 preflight | Yes | Captured in the run manifest for rollback |
+| Reachable upstream DNS servers | Stage 1 preflight | Yes | Technitium must resolve external names before target cutover |
+| `BOOTSTRAP_ADMIN_PASSWORD` | `.env` (mode `0600`) | Yes | Technitium API authentication; never logged or placed in structural config |
 | SSH access to target host | Stage 0 postcondition | Yes | Key-based, no password |
 | Target arch | Stage 0 run manifest | Yes | Determines Docker install path if needed |
 
 ### Outputs / Postconditions
 
 1. Technitium DNS process is running on `<bootstrap_server_ip>:53` (TCP and UDP) and `<bootstrap_server_ip>:5380` (HTTP API)
-2. DNS zone `home.<domain>` exists in Technitium
+2. Terraform state owns DNS zone `home.<domain>` in Technitium
 3. The following A records exist and resolve correctly from the target host:
    - `vault.home.<domain>` → `<bootstrap_server_ip>`
    - `authentik.home.<domain>` → `<bootstrap_server_ip>`
    - `gitlab.home.<domain>` → `<bootstrap_server_ip>`
    - `technitium.home.<domain>` → `<bootstrap_server_ip>`
    - `maas.home.<domain>` → `<bootstrap_server_ip>`
-4. Target host `/etc/resolv.conf` (or systemd-resolved config) uses `127.0.0.1` as primary DNS with the original upstream as fallback
+4. Target host resolver uses the local Technitium instance; its prior
+   configuration is recorded and is restored automatically if verification fails
 5. DNS query from the target host (`dig vault.home.<domain> @127.0.0.1`) returns `<bootstrap_server_ip>`
 6. TUI log contains: `[INFO] stage=dns status=complete`
 7. Log file contains per-record creation entry: `[INFO] dns-record: created name=<name> ip=<ip>`
+8. No router, DHCP, or non-lab client DNS setting was changed
 
 ### Acceptance Criteria
 
-1. Running Stage 1 on a target with no Technitium instance installs Technitium via `roles/technitium_dns`, starts it, and produces all postconditions
+1. Running Stage 1 on a target with no Technitium instance first validates the
+   server address and checks TCP/UDP 53 and TCP 5380, then installs Technitium
+   via `roles/technitium_dns`, starts it, and produces all postconditions
 2. Running Stage 1 when Technitium is already running on ports 5380 and 53 skips installation and jumps directly to zone and record verification/creation
 3. Running Stage 1 when the DNS zone already exists skips zone creation and proceeds to record upserts
 4. Running Stage 1 when all A records already exist produces no changes; all log entries show "already exists" or "skipping"
@@ -201,18 +260,23 @@ Stage 1 deploys Technitium DNS on the target host and configures it as the autho
 8. Technitium container log output on failure is written to the bootstrap log file with an explicit path reference in the TUI error panel
 9. TUI displays all required observable states: `Installing Technitium DNS...`, `DNS: waiting for Technitium to start (Xs)...`, `DNS: creating zone home.<domain>`, `DNS: creating A records...`, `DNS: verifying resolution...`, `Stage 1: DNS — complete`
 10. All A records for downstream service hostnames are present and correct after stage completion; no bootstrap stage beyond Stage 1 may create its first DNS record independently
+11. A forced DNS failure after changing the target resolver restores the exact
+    captured prior resolver configuration
+12. Stage 1 never calls the UniFi API or changes the DNS advertised to existing
+    home networks
 
 ### Failure Modes
 
 | Failure | Detection | Recovery |
 |---------|-----------|----------|
 | Ansible role fails (Docker install, port conflict) | Non-zero Ansible exit code; emitted to log | Emit error + log path to TUI; `[VERIFY]` retry or abort stage |
+| Required port belongs to another process | TCP/UDP probe and process inspection do not identify the managed Technitium instance | Stop before install; identify the address, protocol, port, and owning process |
 | Technitium health poll timeout (120s) | No HTTP 200 from `:5380/api/user/login` within timeout | Dump container logs to log file; emit path; `[VERIFY]` retry or abort |
 | Technitium API auth failure | HTTP 401 or 403 from API | Emit error identifying credential mismatch; operator corrects `BOOTSTRAP_ADMIN_PASSWORD` in `.env`; retry stage |
 | DNS zone creation fails (Technitium API error) | Non-2xx response from Technitium zone API | Emit full API error to log; `[VERIFY]` retry or abort |
 | DNS resolution fails from operator's machine (port 53 blocked by firewall) | DNS query from operator machine returns NXDOMAIN or times out | Emit warning (non-blocking); note operator machine may need manual DNS config or split-DNS; target self-resolution is the critical check |
-| systemd-resolved config fails (locked config, wrong path) | SSH command returns non-zero exit | Emit specific error; provide manual resolution steps in TUI; `[VERIFY]` retry or abort |
-| DNS resolution fails from target (resolver loop) | `dig @127.0.0.1` returns SERVFAIL or times out | Emit error; dump `/etc/resolv.conf` to log; `[VERIFY]` retry resolver config or abort |
+| systemd-resolved config fails (locked config, wrong path) | SSH command returns non-zero exit | Restore captured resolver config; emit specific error; `[VERIFY]` retry or abort |
+| DNS resolution fails from target (resolver loop or upstream failure) | Private or external test query returns SERVFAIL or times out | Restore captured resolver config; dump resolver diagnostics to log; `[VERIFY]` retry or abort |
 
 ### Test Cases
 
@@ -255,13 +319,13 @@ Stage 1 deploys Technitium DNS on the target host and configures it as the autho
 
 ### Summary
 
-Stage 2 obtains a publicly trusted wildcard TLS certificate for `*.home.<domain>` using Cloudflare DNS-01 challenge validation. The Cloudflare API token is never written to disk or logs; it is injected as an environment variable at runtime. The issued certificate and private key are stored locally at `./certs/home.<domain>/` for pickup by Stage 3 (Vault), which is not yet running at this point. This stage depends on Stage 1 (internal DNS running) and internet access to the Cloudflare API. The `roles/tls_lego` Ansible role deploys the lego binary for the target arch.
+Stage 2 obtains a publicly trusted wildcard TLS certificate for `*.home.<domain>` using Cloudflare DNS-01 challenge validation. The Cloudflare API token is read from the mode `0600` `.env` bootstrap input and is never written to logs, process arguments, or structural config. The issued certificate and private key are stored locally at `./certs/home.<domain>/` for pickup by Stage 3 (Vault), which is not yet running at this point. This stage depends on Stage 1 (internal DNS running) and internet access to the Cloudflare API. The `roles/tls_lego` Ansible role deploys the lego binary for the target arch.
 
 ### Inputs
 
 | Input | Source | Required | Notes |
 |-------|--------|----------|-------|
-| `CF_DNS_API_TOKEN` | `.env` (runtime env) | Yes | Never written to disk or logs |
+| `CF_DNS_API_TOKEN` | `.env` during bootstrap; protected host runtime file after setup | Yes | Zone-scoped; never written to logs, arguments, or structural config |
 | `config.cloudflare_zone_id` | `config.yaml` | Yes | Zone ID for the internal domain in Cloudflare |
 | `config.internal_domain` | `config.yaml` | Yes | Wildcard cert covers `*.home.<domain>` and `home.<domain>` |
 | `config.admin_email` | `config.yaml` | Yes | ACME account email |
@@ -353,13 +417,37 @@ The bootstrap tool must support both overrides. They must be wired in at design 
 - ARM64 QEMU VM: assert lego aarch64 binary deployed; cert issuance succeeds
 - Domain with multiple labels (e.g. `lab.home.example.com`): assert wildcard covers `*.lab.home.example.com`
 
+### Day-2 renewal contract
+
+After Stage 2, certificate renewal becomes a host lifecycle responsibility as
+specified in [certificate-renewal.md](certificate-renewal.md):
+
+- a systemd timer checks eligibility daily with a configurable randomized delay;
+- renewal defaults to 30 days before expiry and is configurable or disableable;
+- the zone-scoped Cloudflare token is read from a root-owned mode `0600` runtime
+  file through lego's `_FILE` support;
+- lego writes into a staging directory and never directly overwrites the active
+  certificate;
+- key/certificate match, configured SANs, issuer, chain, and advancing expiry
+  must validate before an atomic `current` symlink switch;
+- consumers reload sequentially with health checks and the prior certificate is
+  restored if any consumer fails;
+- Vault synchronization occurs immediately when unsealed or is recorded as
+  pending for post-unseal reconciliation; and
+- GitLab, Runner, and Vault availability are not renewal prerequisites.
+
+Acceptance tests use Pebble and the Cloudflare mock, inject consumer reload
+failure at each position, verify rollback, and prove sealed-Vault renewal plus
+post-unseal reconciliation. Disabling automation must retain expiry monitoring
+and a persistent manual-renewal warning.
+
 ---
 
 ## Stage 3: Vault
 
 ### Summary
 
-Stage 3 installs, initializes, and configures HashiCorp Vault as the central secrets store for the entire platform. Vault runs with Raft integrated storage, is secured with the wildcard TLS cert from Stage 2, and is initialized with Shamir unseal keys. The `vault-init.json` file containing all unseal keys and the root token is written to disk and must be secured by the operator immediately. This file is sacred: failure to write it is a hard halt. After initialization and unsealing, Stage 3 mounts the `kv-v2` secrets engine, writes the wildcard cert to Vault, enables an audit log, writes bootstrap policies, enables the OIDC auth method (pre-configured for Authentik in Stage 4), and generates a 24-hour bootstrap token for use by all subsequent stages. The Ansible role `roles/vault_install` handles binary deployment and systemd unit configuration.
+Stage 3 installs, initializes, and configures HashiCorp Vault as the authoritative secrets store for the platform. Vault runs with Raft integrated storage, is secured with the wildcard TLS cert from Stage 2, and is initialized with Shamir unseal keys. The `vault-init.json` file containing all unseal keys and the root token is written to an operator-selected path outside the repository and must be backed up securely. This file is sacred: failure to write it is a hard halt. Manual unseal is the v1 default. After initialization and unsealing, Stage 3 mounts the `kv-v2` secrets engine, writes the wildcard cert to Vault, enables an audit log, writes bootstrap policies, enables the OIDC auth method (completed after Authentik starts in Stage 5), and generates a 24-hour bootstrap token for use by all subsequent stages. Core host services may retain minimum root-owned mode `0600` runtime copies under ADR-009. The Ansible role `roles/vault_install` handles binary deployment and systemd unit configuration.
 
 ### Inputs
 
@@ -380,14 +468,14 @@ Stage 3 installs, initializes, and configures HashiCorp Vault as the central sec
 1. Vault is running at `https://vault.home.<domain>:8200`; `GET /v1/sys/health` returns HTTP 200
 2. Vault is initialized (`GET /v1/sys/init` returns `{"initialized": true}`)
 3. Vault is unsealed (`GET /v1/sys/seal-status` returns `{"sealed": false}`)
-4. `./vault-init.json` exists and contains valid unseal keys and root token
+4. The configured `vault_init_output_path` is outside the repository, exists with mode `0600`, and contains valid unseal keys and root token
 5. TUI displayed the `vault-init.json` warning box prominently during init
 6. `kv-v2` secrets engine is mounted at `secret/`
 7. `pki` secrets engine is mounted at `pki/`
 8. Wildcard TLS cert is written to `secret/data/bootstrap/tls/wildcard` with fields `cert`, `key`, `expiry`, `domain`
 9. Vault audit log is active at `/var/log/vault/audit.log` on the target host
 10. Vault policy `bootstrap` is written and allows reading bootstrap secrets
-11. OIDC auth method is enabled at `auth/oidc/` (pending Authentik configuration in Stage 4)
+11. OIDC auth method is enabled at `auth/oidc/` (pending Authentik configuration in Stage 5)
 12. Root token is stored at `secret/data/bootstrap/vault/root-token`
 13. Bootstrap-scoped token (policy `bootstrap`, TTL `24h`) is held in-memory run context; not written to disk or logs
 14. TUI cert permissions on target: `/etc/vault.d/tls/privkey.pem` is `vault:vault 0400`; `/etc/vault.d/tls/fullchain.pem` is `0644`
@@ -398,8 +486,8 @@ Stage 3 installs, initializes, and configures HashiCorp Vault as the central sec
 1. Running Stage 3 on a target with no Vault installation deploys the correct binary for the target arch, writes Vault config with Raft storage and TLS cert paths, creates the systemd unit, starts the service, and produces all postconditions
 2. Running Stage 3 when Vault is already running and initialized skips install and init; jumps to seal check
 3. Running Stage 3 when Vault is running, initialized, and unsealed skips install, init, and unseal; verifies secrets engines, policies, and OIDC auth method presence
-4. On first initialization, `vault-init.json` is written to `./vault-init.json` immediately upon receiving the init response; if the write fails for any reason, bootstrap halts with a CRITICAL error in the TUI (red panel) and does not proceed
-5. The TUI displays a prominent warning box after `vault-init.json` is written: text must include the file path, a warning not to commit to git, and instructions to move to secure offline storage
+4. On first initialization, `vault-init.json` is written atomically to the configured path immediately upon receiving the init response; the path must resolve outside the repository and the file must have mode `0600`. If the write fails for any reason, bootstrap halts with a CRITICAL error in the TUI and does not proceed
+5. The TUI displays a prominent warning box after `vault-init.json` is written: text must include the absolute file path, a warning not to commit it, a recommendation to back it up in a password manager or other secure location, and a statement that bootstrap cannot verify the external backup
 6. `vault-init.json` content does not appear in the log file
 7. On first run, TUI offers to auto-read unseal keys from `vault-init.json`; this offer is present only on the first-run path; subsequent runs require manual key entry
 8. Wrong unseal key entry produces an inline error with "wrong key" and allows re-entry without resetting unseal progress
@@ -410,6 +498,8 @@ Stage 3 installs, initializes, and configures HashiCorp Vault as the central sec
 13. Bootstrap token in run context is not present in any log line, TUI output, or file; it exists only in memory for the current run
 14. Bootstrap token has a 24-hour TTL; running bootstrap stages spanning more than 24 hours (detected by token creation time in manifest vs. current time) produces a warning that the token may be expired and Stage 3 must be re-run to refresh it
 15. TUI displays all required observable states: `Vault: checking for existing instance...`, `Vault: installing Vault binary...`, `Vault: starting Vault service...`, `Vault: initializing (first run)...`, warning box for `vault-init.json`, `Vault: enter unseal key N of threshold...`, `Vault: unsealed`, `Vault: configuring secrets engines and policies...`, `Stage 3: Vault — complete`
+16. Successful bootstrap preserves `.env` and `~/.bootstrap` by default; no automatic cleanup removes recovery or rerun material
+17. Any future cleanup flow inventories proposed removals, verifies authoritative Vault copies first, requires explicit confirmation, and never removes `vault-init.json`
 
 ### Failure Modes
 
@@ -430,7 +520,7 @@ Stage 3 installs, initializes, and configures HashiCorp Vault as the central sec
 - Boot fresh QEMU VM; run Stages 0–2 first
 - Run `just test-stage vault`
 - Assert: Vault running; `https://vault.home.test:8200/v1/sys/health` returns 200
-- Assert: `./vault-init.json` exists with `keys` and `root_token` fields; file is valid JSON
+- Assert: the configured `vault_init_output_path` exists with mode `0600`, contains `keys` and `root_token` fields, and is valid JSON
 - Assert: TUI warning box was shown (inspect TUI log for the warning message)
 - Assert: `GET /v1/sys/seal-status` returns `{"sealed": false}`
 - Assert: `kv-v2` mount at `secret/` and `pki` mount at `pki/` are active
@@ -453,7 +543,7 @@ Stage 3 installs, initializes, and configures HashiCorp Vault as the central sec
 
 #### Failure Injection
 
-- **`vault-init.json` write fails**: run Stage 3 on a VM where `./` is read-only or disk is full; assert CRITICAL TUI error in red panel; assert bootstrap halts immediately; assert no further Vault operations are attempted after the write failure
+- **`vault-init.json` write fails**: configure a read-only or full destination filesystem; assert CRITICAL TUI error in red panel; assert bootstrap halts immediately; assert no further Vault operations are attempted after the write failure
 - **Wrong unseal key**: after init, enter an incorrect unseal key; assert HTTP 400 is caught; assert inline error shown; assert progress counter does not regress; assert correct key entry after error continues normally
 - **Vault start failure (port conflict)**: bind port 8200 with a dummy process before Stage 3; assert health poll timeout at 60s; assert `journalctl` output is dumped to log file; assert TUI shows log file path; assert `[VERIFY]` prompt appears
 - **TLS cert path mismatch**: point Vault config at a non-existent cert path; assert Vault fails to start; assert error is correctly attributed to TLS config
@@ -466,192 +556,131 @@ Stage 3 installs, initializes, and configures HashiCorp Vault as the central sec
 
 ---
 
-## Stage 4: Authentik
+## Stage 4: PostgreSQL
 
 ### Summary
 
-Stage 4 deploys Authentik as the SSO provider for the entire platform. Authentik uses its bundled PostgreSQL during bootstrap (the shared PostgreSQL instance is not yet available) and migrates to the shared instance at the end of Stage 5. Stage 4 creates the `adults` and `kids` groups, registers OIDC providers for Vault and GitLab, writes OIDC client credentials to Vault, completes the Vault OIDC auth method configuration begun in Stage 3, and creates Authentik application entries for services requiring SSO. The Ansible role `roles/authentik_install` handles Docker Compose deployment. This stage has a hard prerequisite on Vault being unsealed; it checks seal state at the start and halts if sealed.
+Stage 4 deploys the shared PostgreSQL service before any dependent application.
+It creates isolated databases and roles for Authentik, GitLab, and MAAS, stores
+their credentials in Vault, and verifies role boundaries. The Ansible role
+`roles/postgresql_install` owns installation and host configuration. The complete
+decision is in [`docs/database-architecture.md`](database-architecture.md).
 
 ### Inputs
 
 | Input | Source | Required | Notes |
 |-------|--------|----------|-------|
 | `config.yaml` | Stage 0 output | Yes | |
-| `config.bootstrap_server_ip` | `config.yaml` | Yes | Authentik Docker Compose binds here |
-| Bootstrap token | Stage 3 run context (in-memory) | Yes | Used for all Vault reads/writes in this stage |
-| Vault unsealed | Stage 3 postcondition | Yes | Checked at stage start; halt if sealed |
-| `kv-v2` at `secret/` | Stage 3 postcondition | Yes | For reading/writing credentials |
-| DNS resolution of `authentik.home.<domain>` | Stage 1 postcondition | Yes | Must resolve before health check |
-| Wildcard TLS cert | Stage 2 output, also at `secret/data/bootstrap/tls/wildcard` | Yes | Used for Authentik HTTPS |
-| Docker available on target | Stage 1 postcondition (Docker installed by `roles/technitium_dns`) | Yes | Docker Compose required |
-| Ports 9000 (HTTP) and 9443 (HTTPS) available on target | Network prerequisite | Yes | |
+| `config.bootstrap_server_ip` | `config.yaml` | Yes | PostgreSQL service address |
+| Bootstrap token and unsealed Vault | Stage 3 | Yes | Used for database credential records |
+| Target arch | Stage 0 run manifest | Yes | PostgreSQL package selection |
+| Port 5432 available | Network prerequisite | Yes | |
+| Target disk space >= 20 GB | Target prerequisite | Yes | |
 
 ### Outputs / Postconditions
 
-1. Authentik is running at `https://authentik.home.<domain>`; `GET /api/v3/root/config/` returns HTTP 200
-2. Authentik admin account exists with password stored at `secret/data/bootstrap/authentik/admin`
-3. Authentik group `adults` exists
-4. Authentik group `kids` exists
-5. Authentik OIDC provider `vault` exists with correct redirect URI: `https://vault.home.<domain>/ui/vault/auth/oidc/oidc/callback`
-6. Authentik OIDC provider `gitlab` exists with correct redirect URI: `https://gitlab.home.<domain>/users/auth/openid_connect/callback`
-7. OIDC client credentials for `vault` are in Vault at `secret/data/bootstrap/authentik/oidc/vault` with fields `client_id` and `client_secret`
-8. OIDC client credentials for `gitlab` are in Vault at `secret/data/bootstrap/authentik/oidc/gitlab` with fields `client_id` and `client_secret`
-9. Vault OIDC auth method at `auth/oidc/` is fully configured with Authentik as the provider: `oidc_discovery_url`, `client_id`, `client_secret`, `oidc_scopes` are set
-10. Authentik application `vault` pointing to the Vault OIDC provider exists
-11. Authentik application `gitlab` pointing to the GitLab OIDC provider exists
-12. OIDC discovery document for Vault is fetchable: `GET https://authentik.home.<domain>/application/o/vault/.well-known/openid-configuration` returns valid issuer and authorization endpoint
-13. TUI log contains: `[INFO] stage=authentik status=complete`
+1. The pinned PostgreSQL version is running and healthy.
+2. PostgreSQL admin credentials are stored at `secret/data/bootstrap/postgres/admin`.
+3. Dedicated `authentik`, `gitlab`, and `maas` databases and roles exist.
+4. Each service credential is stored at `secret/data/bootstrap/postgres/<service>`.
+5. Each role can connect to its own database and cannot connect to another
+   service's database.
+6. Network access is limited to configured service hosts/networks.
+7. TUI log contains `[INFO] stage=postgres status=complete`.
 
 ### Acceptance Criteria
 
-1. Running Stage 4 on a target with no Authentik instance deploys via `roles/authentik_install` (Docker Compose), waits up to 300s for health, and produces all postconditions
-2. Running Stage 4 when Authentik is already running skips installation and jumps to group/OIDC/application idempotency checks
-3. Authentik admin password is generated if not present in Vault at `secret/data/bootstrap/authentik/admin`; if present, the existing value is used without regeneration
-4. Groups `adults` and `kids` are created once; running Stage 4 a second time does not create duplicate groups
-5. OIDC providers `vault` and `gitlab` are created once; if they already exist by name, their existing `client_id` is read and Vault is updated only if the stored value differs
-6. OIDC client credentials for both `vault` and `gitlab` providers are present in Vault immediately after the stage completes; `client_secret` values are not present in log files or TUI output
-7. Vault OIDC auth method is fully configured: a `vault list auth/oidc/config` against the running Vault returns a non-empty configuration with the Authentik discovery URL
-8. Authentik startup health poll logs progress every 30 seconds: `[INFO] authentik-wait: elapsed=Xs`
-9. If Vault is sealed at stage start, Stage 4 halts immediately with a TUI error: `Vault is sealed — unseal Vault before continuing Stage 4`; no Authentik operations are attempted
-10. TUI displays all required observable states: `Authentik: verifying Vault is unsealed...`, `Authentik: deploying...`, `Authentik: waiting for startup (Xs)...`, `Authentik: creating groups...`, `Authentik: registering OIDC clients...`, `Authentik: storing credentials in Vault...`, `Stage 4: Authentik — complete`
+1. A fresh Stage 4 installs PostgreSQL and creates all postconditions.
+2. A second run makes no destructive database or role changes.
+3. Existing non-empty databases are never dropped, emptied, or silently adopted.
+4. Passwords do not appear in logs, TUI output, process arguments, or structural config.
+5. A database/role mismatch stops with an explicit repair decision.
+6. TUI states include checking, installing, creating service databases,
+   verifying role isolation, and `Stage 4: PostgreSQL — complete`.
 
 ### Failure Modes
 
 | Failure | Detection | Recovery |
 |---------|-----------|----------|
-| Vault sealed at stage start | `GET /v1/sys/seal-status` returns `{"sealed": true}` | Halt; TUI error: "Vault is sealed"; instruct operator to unseal via `vault operator unseal` using `vault-init.json` keys; retry `bootstrap --stage authentik` |
-| Docker Compose deploy fails (resource limits, image pull failure) | `docker compose up` non-zero exit | Emit full Docker Compose output to log file; emit path to TUI; `[VERIFY]` retry or abort |
-| Authentik health timeout (300s) | No HTTP 200 from health endpoint within timeout | Dump Authentik container logs to log file; emit path; `[VERIFY]` retry or abort |
-| OIDC provider creation fails (API error, name conflict) | Authentik API returns non-2xx | Emit Authentik API error to log; `[VERIFY]` retry or abort |
-| Vault write fails (bootstrap token expired after 24h TTL) | Vault API returns 403 | Emit token expiry warning; instruct operator to run `bootstrap --stage vault` to refresh token; then retry `bootstrap --stage authentik` |
-| Vault OIDC config fails (Authentik not fully initialized) | Vault API returns error writing OIDC config | Emit error; `[VERIFY]` retry (Authentik may need more startup time) or abort |
+| Vault sealed | Seal-status check | Halt, instruct unseal, retry Stage 4 |
+| Install or service start fails | Ansible/systemd failure | Preserve data; emit logs; retry |
+| Conflicting database or role | Catalog differs from expected ownership | Stop without mutation; present conflict |
+| Connectivity or isolation check fails | Positive or negative `psql` check differs | Stop; show database/role involved without secret values |
 
 ### Test Cases
 
-#### Happy Path
-
-- Boot fresh QEMU VM; run Stages 0–3
-- Run `just test-stage authentik`
-- Assert: `https://authentik.home.test/api/v3/root/config/` returns HTTP 200
-- Assert: `adults` and `kids` groups exist via Authentik API
-- Assert: OIDC providers `vault` and `gitlab` exist via Authentik API
-- Assert: `secret/data/bootstrap/authentik/oidc/vault` readable from Vault with `client_id` and `client_secret` fields
-- Assert: `secret/data/bootstrap/authentik/oidc/gitlab` readable from Vault with `client_id` and `client_secret` fields
-- Assert: Vault OIDC auth method has `oidc_discovery_url` configured
-- Assert: OIDC discovery doc fetchable: `GET .../application/o/vault/.well-known/openid-configuration` returns 200
-- Assert: log contains `[INFO] stage=authentik status=complete`
-
-#### Idempotency
-
-- After happy path run, run Stage 4 a second time without resetting VM
-- Assert: Ansible role `roles/authentik_install` reports no changes (`changed=0`)
-- Assert: groups `adults` and `kids` creation steps log "already exists; skipping"
-- Assert: OIDC provider creation steps log "already exists; skipping"
-- Assert: Vault writes for OIDC credentials are skipped or produce no net change (value unchanged)
-- Assert: stage completes without error
-
-#### Failure Injection
-
-- **Vault sealed**: seal Vault before Stage 4; assert stage halts at step 1; assert TUI error message is present; assert no Docker Compose operations are attempted
-- **Authentik health timeout**: deploy Authentik with a misconfigured database so it never becomes healthy; assert timeout at 300s; assert container logs are dumped; assert TUI shows log path; assert `[VERIFY]` prompt appears
-- **Bootstrap token expired**: run Stage 4 with a manually expired bootstrap token; assert HTTP 403 from Vault is caught; assert token expiry warning is shown; assert operator is directed to refresh via `bootstrap --stage vault`
-
-#### Edge Cases
-
-- OIDC provider already exists with a different redirect URI: assert stage detects the mismatch and updates the provider to the correct URI
-- Authentik startup takes > 240s on a slow VM: assert health poll continues up to the 300s limit without spurious failure
+- Fresh QEMU run after Stages 0–3 creates all three databases and Vault records.
+- A second Stage 4 run reports no unintended changes.
+- Cross-service connection attempts are rejected.
+- A pre-existing non-empty `authentik` database is not overwritten or inferred
+  to be a supported brownfield import.
+- Sealed Vault and occupied-port injections halt before database creation.
 
 ---
 
-## Stage 5: PostgreSQL
+## Stage 5: Authentik
 
 ### Summary
 
-Stage 5 deploys PostgreSQL as the shared database backing service for GitLab, Authentik, and MAAS. It generates per-service database credentials, stores them in Vault, creates the databases and users, verifies connectivity, and migrates Authentik from its bundled PostgreSQL to the shared instance. The migration is a stop-export-import-restart sequence; the original bundled database is preserved until migration is confirmed. The Ansible role `roles/postgresql_install` handles installation and base configuration. This stage has a hard prerequisite on Vault being unsealed.
+Stage 5 deploys Authentik directly against the final PostgreSQL database created
+in Stage 4. The bootstrap compose definition has no bundled PostgreSQL service.
+After first-start schema initialization and health checks, Terraform creates
+groups, OIDC providers, applications, and policy bindings. The stage completes
+Vault's OIDC configuration and records generated client credentials in Vault.
 
 ### Inputs
 
 | Input | Source | Required | Notes |
 |-------|--------|----------|-------|
 | `config.yaml` | Stage 0 output | Yes | |
-| `config.bootstrap_server_ip` | `config.yaml` | Yes | PostgreSQL binds to this host; `pg_hba.conf` allows connections from here |
-| Bootstrap token | Stage 3 run context (in-memory) | Yes | All Vault reads/writes |
-| Vault unsealed | Stage 3 postcondition | Yes | Checked at stage start; halt if sealed |
-| Authentik running | Stage 4 postcondition | Yes | Will be migrated to shared PostgreSQL at end of this stage |
-| Target arch | Stage 0 run manifest | Yes | PostgreSQL package selection |
-| Port 5432 available on target | Network prerequisite | Yes | |
-| Target disk space >= 20 GB available | Target prerequisite | Yes | |
+| Bootstrap token and unsealed Vault | Stage 3 | Yes | Vault reads/writes |
+| Authentik database and credential | Stage 4 | Yes | Final database used from first start |
+| DNS and wildcard TLS | Stages 1–2 | Yes | Service hostname and HTTPS |
+| Docker and ports 9000/9443 | Target prerequisite | Yes | |
 
 ### Outputs / Postconditions
 
-1. PostgreSQL 16 (or latest stable) is running on `<target>:5432`
-2. PostgreSQL admin credentials are in Vault at `secret/data/bootstrap/postgres/admin`
-3. Database `authentik` exists with user `authentik`; credentials at `secret/data/bootstrap/postgres/authentik`
-4. Database `gitlab` exists with user `gitlab`; credentials at `secret/data/bootstrap/postgres/gitlab`
-5. Database `maas` exists with user `maas`; credentials at `secret/data/bootstrap/postgres/maas`
-6. All three service users can connect to their respective databases from the target host
-7. Authentik is running at `https://authentik.home.<domain>` and healthy after migration to shared PostgreSQL
-8. Authentik config points to shared PostgreSQL DSN (not the bundled instance)
-9. TUI log contains: `[INFO] stage=postgres status=complete`
-10. Log file contains: `[INFO] authentik-migration: migrated to shared postgres` and `[INFO] authentik-migration: health check passed`
+1. Authentik is healthy at `https://authentik.home.<domain>`.
+2. Its runtime configuration points to the Stage 4 PostgreSQL database.
+3. No bundled PostgreSQL container, temporary database, or migration artifact exists.
+4. Bootstrap admin credentials are stored in Vault.
+5. Groups `adults` and `kids` exist.
+6. Vault and GitLab OIDC providers/applications exist with correct redirect URIs.
+7. Their client credentials are stored under
+   `secret/data/bootstrap/authentik/oidc/<consumer>`.
+8. Vault OIDC discovery and callback configuration are verified.
+9. TUI log contains `[INFO] stage=authentik status=complete`.
 
 ### Acceptance Criteria
 
-1. Running Stage 5 on a target with no PostgreSQL installs PostgreSQL via `roles/postgresql_install`, configures `listen_addresses = '*'` and `pg_hba.conf` with the bootstrap server IP, and produces all postconditions
-2. Running Stage 5 when PostgreSQL is already running skips installation and jumps to database/user idempotency checks
-3. PostgreSQL admin password is generated if not present in Vault at `secret/data/bootstrap/postgres/admin`; existing value is used if present
-4. Each per-service database and user is created once; running Stage 5 a second time detects existing objects and skips creation without error
-5. Per-service credentials (passwords) are written to Vault and not present in any log file, TUI output, or config file
-6. Connectivity verification (`psql` check) passes for all three service users against their respective databases
-7. Authentik migration: Authentik is stopped, data is exported from the bundled PostgreSQL, imported into the shared instance, and Authentik is restarted with the new DSN; health check passes after restart (up to 300s wait)
-8. If Authentik health check fails after migration, the TUI presents a `[VERIFY]` prompt offering rollback to the bundled DSN or retry; rollback must restore Authentik to a healthy state using the original bundled database
-9. If Authentik is already using the shared PostgreSQL (DSN in Authentik config matches shared instance), the migration step is skipped entirely
-10. TUI displays all required observable states: `PostgreSQL: checking for existing instance...`, `PostgreSQL: installing...`, `PostgreSQL: creating service databases...`, `PostgreSQL: migrating Authentik to shared DB...`, `PostgreSQL: verifying connectivity...`, `Stage 5: PostgreSQL — complete`
+1. Stage 5 refuses to start if Vault or the final Authentik database is unhealthy.
+2. The rendered compose and runtime configuration contain no bundled PostgreSQL service.
+3. First startup waits up to 300 seconds for schema initialization and health.
+4. An interrupted first startup can be retried without dropping the database.
+5. Groups, providers, applications, and Vault records reconcile idempotently.
+6. No database or OIDC secret is printed or written to structural configuration.
+7. TUI states include database verification, deploying, schema initialization,
+   health, OIDC configuration, and `Stage 5: Authentik — complete`.
 
 ### Failure Modes
 
 | Failure | Detection | Recovery |
 |---------|-----------|----------|
-| Vault sealed at stage start | `GET /v1/sys/seal-status` returns sealed | Halt; TUI error; instruct operator to unseal; retry stage |
-| PostgreSQL install fails (package repo unreachable, disk space) | Non-zero Ansible exit code | Emit error + log path; `[VERIFY]` retry or abort |
-| PostgreSQL service fails to start (config error) | systemd service non-active after start attempt | Dump `journalctl -u postgresql` to log; `[VERIFY]` retry or abort |
-| User/DB creation fails (permission error, conflicting objects) | `psql` command non-zero exit | Emit specific psql error; `[VERIFY]` retry or abort |
-| Authentik migration fails mid-import (pg_dump error, import conflict) | pg_dump or psql import non-zero exit | Stop: Authentik is stopped; original bundled DB still intact; revert Authentik config to bundled DSN; restart Authentik; resolve conflict; retry `bootstrap --stage postgres` |
-| Authentik unhealthy after migration (data corruption) | Health check returns non-200 within 300s | `[VERIFY]` prompt: rollback to bundled DSN (restart Authentik with original config) or retry migration |
+| Vault sealed or token expired | Vault API check | Halt; unseal or refresh Stage 3 token; retry |
+| Final database unreachable | Authentik-role connection check | Make no container change; repair Stage 4 and retry |
+| Compose deployment fails | Non-zero Compose result | Preserve DB and runtime config; emit logs; retry |
+| First-start health timeout | Health endpoint and container logs | Preserve initialized data; diagnose and retry; never restore/drop automatically |
+| OIDC reconciliation fails | Authentik or Vault API error | Leave healthy service running; retry configuration idempotently |
 
 ### Test Cases
 
-#### Happy Path
-
-- Boot fresh QEMU VM; run Stages 0–4
-- Run `just test-stage postgres`
-- Assert: TCP port 5432 open on QEMU VM
-- Assert: `psql -U authentik -d authentik -c '\q'` succeeds
-- Assert: `psql -U gitlab -d gitlab -c '\q'` succeeds
-- Assert: `psql -U maas -d maas -c '\q'` succeeds
-- Assert: all credentials readable from Vault at `secret/data/bootstrap/postgres/*`
-- Assert: `GET https://authentik.home.test/api/v3/root/config/` returns 200 after migration
-- Assert: Authentik config DSN points to shared PostgreSQL (not bundled)
-- Assert: log contains `[INFO] stage=postgres status=complete`
-
-#### Idempotency
-
-- After happy path run, run Stage 5 a second time without resetting VM
-- Assert: PostgreSQL install step is skipped
-- Assert: all database/user creation steps log "already exists; skipping"
-- Assert: Authentik migration step is skipped (DSN already points to shared PostgreSQL)
-- Assert: stage completes without error
-
-#### Failure Injection
-
-- **Migration fails mid-import**: corrupt the pg_dump output to simulate an import error; assert migration halts; assert Authentik is reverted to bundled DSN; assert Authentik becomes healthy again after rollback; assert `[VERIFY]` prompt appeared
-- **Authentik unhealthy after migration**: simulate a migration that completes but leaves Authentik unhealthy (misconfigured DSN); assert health check timeout; assert `[VERIFY]` rollback prompt; assert rollback restores health
-- **Vault sealed**: seal Vault before Stage 5; assert stage halts at seal check; assert no PostgreSQL operations are attempted
-
-#### Edge Cases
-
-- PostgreSQL on a separate host (configured in `config.yaml` to point to different IP): assert Ansible role targets the correct host; connection checks use the external IP
-- Authentik migration on a VM with < 500 MB free disk: assert stage detects insufficient disk before attempting pg_dump
+- A fresh Stage 5 starts against the Stage 4 database and completes OIDC setup.
+- Compose inspection proves no PostgreSQL service or migration command exists.
+- A second run produces no duplicate groups, providers, or applications.
+- A forced first-start interruption resumes without data loss.
+- Seeded users, groups, flows, and OIDC configuration survive a PostgreSQL
+  backup/restore drill.
+- Browser login through Authentik to Vault succeeds.
 
 ---
 
@@ -761,7 +790,13 @@ Stage 6 installs GitLab CE and a GitLab Runner, configures GitLab as the GitOps 
 
 ### Summary
 
-Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning system for the lab VLAN. MAAS is configured with the shared PostgreSQL instance, given the lab VLAN fabric and subnet, and made the DHCP authority for that segment. Ubuntu OS images (22.04 and 24.04, amd64 and arm64) are imported asynchronously. A MAAS Terraform API key is generated and stored in Vault. After Stage 7, new physical servers can be PXE-booted on the lab VLAN and will appear in MAAS for commissioning. The Ansible role `roles/maas_install` handles MAAS snap/deb installation. OS image import is a background operation and does not block stage completion.
+Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning
+system for the lab VLAN. Ansible installs and initializes MAAS; Terraform owns
+the fabric, VLAN, subnet, and ranges. DHCP remains disabled by default. When
+`maas_dhcp_enabled` is explicitly true, an interactive cutover may make MAAS
+the DHCP authority for only the dedicated lab VLAN after the operator disables
+UniFi DHCP for that VLAN and all safety gates pass. Image import is asynchronous
+and does not block stage completion.
 
 ### Inputs
 
@@ -770,13 +805,17 @@ Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning system 
 | `config.yaml` | Stage 0 output | Yes | |
 | `config.bootstrap_server_ip` | `config.yaml` | Yes | MAAS installs here |
 | `config.lab_vlan_subnet` | `config.yaml` | Yes | CIDR for lab segment (e.g. `10.10.10.0/24`) |
-| `config.lab_vlan_id` | `config.yaml` | Yes | VLAN ID configured on Unifi |
+| `config.lab_vlan_id` | `config.yaml` | Yes | VLAN ID configured on UniFi |
+| `config.lab_vlan_interface` | `config.yaml` | Conditional | Required when MAAS DHCP is enabled; receives the lab VLAN |
+| `config.lab_gateway` | `config.yaml` | Yes | Must be contained by the lab subnet |
+| `config.dhcp_range_low`, `config.dhcp_range_high` | `config.yaml` | Conditional | Required when MAAS DHCP is enabled; must not include infrastructure addresses |
+| `config.maas_dhcp_enabled` | `config.yaml` | No | Defaults to `false`; starts the deliberate DHCP cutover |
 | Bootstrap token | Stage 3 run context (in-memory) | Yes | All Vault reads/writes |
 | Vault unsealed | Stage 3 postcondition | Yes | Checked at stage start; halt if sealed |
 | PostgreSQL DSN for `maas` db | `secret/data/bootstrap/postgres/maas` in Vault | Yes | Injected as env var; not logged |
 | DNS resolution of `maas.home.<domain>` | Stage 1 postcondition | Yes | |
 | Technitium DNS IP | Stage 1 postcondition | Yes | Set as MAAS upstream DNS |
-| Lab VLAN trunked to bootstrap server network interface | Physical/Unifi prerequisite | Yes | Operator must configure Unifi before this stage |
+| Lab VLAN trunked to bootstrap server network interface | Physical/UniFi prerequisite | Conditional | Required before enabling MAAS DHCP |
 | Ports 5240 (HTTP) and 5241 (HTTPS) available on target | Network prerequisite | Yes | |
 | Target arch | Stage 0 run manifest | Yes | MAAS snap/deb variant |
 
@@ -786,24 +825,34 @@ Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning system 
 2. MAAS admin credentials are in Vault at `secret/data/bootstrap/maas/admin`
 3. MAAS upstream DNS is configured to use the Technitium DNS IP
 4. MAAS domain is set to `maas.home.<domain>`
-5. Lab VLAN fabric and subnet (`config.lab_vlan_subnet`) are defined in MAAS
-6. DHCP is enabled on the lab VLAN subnet with MAAS as the DHCP server
+5. Lab VLAN fabric and subnet (`config.lab_vlan_subnet`) are defined in MAAS and
+   owned by the MAAS Terraform state
+6. DHCP remains disabled unless `config.maas_dhcp_enabled` is true and the
+   approved cutover completes
 7. Ubuntu 22.04 and 24.04 image imports are initiated (background); import status is logged
 8. MAAS Terraform API key is in Vault at `secret/data/bootstrap/maas/terraform-api-key`
 9. TUI log contains: `[INFO] stage=maas status=complete`
-10. Log file contains: `[INFO] maas-network: lab vlan configured; dhcp enabled` and `[INFO] maas-terraform: api key written to vault`
+10. Log file contains the network validation result and an explicit
+    `dhcp=disabled`, `dhcp=enabled`, or `dhcp=rollback` outcome
 
 ### Acceptance Criteria
 
 1. Running Stage 7 on a target with no MAAS installs via `roles/maas_install`, runs `maas init region+rack`, waits up to 300s for the API, and produces all postconditions
 2. Running Stage 7 when MAAS is already running skips installation and jumps to network config idempotency
 3. PostgreSQL DSN is injected via environment variable into the `maas init` command; DSN is not present in any log file or TUI output
-4. Lab VLAN DHCP: if DHCP is already enabled on the MAAS-managed subnet, the DHCP configuration step is skipped without error
+4. With `maas_dhcp_enabled: false`, Stage 7 makes no DHCP-authority change and
+   completes with `MAAS: DHCP disabled (default)`
 5. OS image import is initiated as a background operation; stage completion does not wait for images to finish downloading; TUI shows "MAAS: importing OS images (background — may take several minutes)..." and moves on
 6. MAAS Terraform API key is stored in Vault and not present in any log file or TUI output
 7. `maas.home.<domain>` A record is verified (may already exist from Stage 1); no duplicate records are created
 8. Upstream DNS in MAAS is set to Technitium's IP; MAAS does not use a public resolver directly
-9. TUI displays all required observable states: `MAAS: checking for existing instance...`, `MAAS: installing...`, `MAAS: configuring network and DHCP...`, `MAAS: importing OS images (background)...`, `Stage 7: MAAS — complete`
+9. An enabled cutover shows the interface, VLAN, subnet, gateway, range, current
+   DHCP observation, proposed MAAS authority, UniFi step, and rollback procedure
+10. After the operator confirms UniFi DHCP is disabled on only the lab VLAN, a
+    repeated bounded probe must observe no conflicting DHCP offer before MAAS is enabled
+11. Failed enablement disables partial MAAS DHCP and instructs the operator to
+    restore the recorded UniFi DHCP settings
+12. TUI displays all required observable states: `MAAS: checking for existing instance...`, `MAAS: installing...`, `MAAS: configuring network...`, `MAAS: DHCP disabled (default)` or the explicit cutover states, `MAAS: importing OS images (background)...`, `Stage 7: MAAS — complete`
 
 ### Failure Modes
 
@@ -813,7 +862,9 @@ Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning system 
 | MAAS snap install fails (network, snap store unreachable) | Non-zero snap install exit code | Emit error + log path; `[VERIFY]` retry or abort |
 | MAAS database init fails (wrong DSN, PostgreSQL not accepting connections) | `maas init` non-zero exit | Check PostgreSQL connectivity from target; verify `maas` user permissions; emit instructions; retry `bootstrap --stage maas` |
 | MAAS health timeout (300s) | No HTTP 200 from `/MAAS/api/2.0/` within timeout | Emit timeout error; `[VERIFY]` retry or abort |
-| DHCP config fails (VLAN not present, subnet conflict) | MAAS API returns error on DHCP enable | Emit MAAS API error; `[VERIFY]` prompt noting operator must verify Unifi VLAN config and lab VLAN trunk; retry |
+| DHCP prerequisites fail | Interface/VLAN missing; invalid or overlapping subnet/range; Technitium unhealthy | Refuse cutover without changing DHCP |
+| Existing DHCP authority detected | Bounded probe observes a DHCP offer after the operator's UniFi confirmation | Refuse to enable MAAS; identify the observed server when possible |
+| MAAS DHCP enable or verification fails | MAAS API error or test client cannot obtain a correct lease | Disable partial MAAS DHCP; direct operator to restore UniFi DHCP for the lab VLAN |
 | OS image import fails (no internet, wrong arch) | MAAS image import status API returns error | Non-blocking warning emitted to TUI; images can be re-imported post-bootstrap; stage continues |
 
 ### Test Cases
@@ -824,7 +875,7 @@ Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning system 
 - Run `just test-stage maas`
 - Assert: `GET http://maas.home.test:5240/MAAS/api/2.0/` returns HTTP 200
 - Assert: lab VLAN subnet visible in MAAS fabric/subnet API
-- Assert: DHCP enabled on lab VLAN subnet via MAAS API
+- Assert: DHCP remains disabled with the default configuration
 - Assert: `secret/data/bootstrap/maas/terraform-api-key` readable from Vault
 - Assert: MAAS upstream DNS is Technitium IP
 - Assert: log contains `[INFO] stage=maas status=complete`
@@ -834,20 +885,24 @@ Stage 7 deploys MAAS (Metal as a Service) as the bare metal provisioning system 
 - After happy path run, run Stage 7 a second time without resetting VM
 - Assert: MAAS install step is skipped (log: "already running")
 - Assert: VLAN/subnet config step is skipped (already exists)
-- Assert: DHCP config step is skipped (already enabled)
+- Assert: DHCP remains disabled and no authority-change API request is made
 - Assert: image import step notes images already imported or import already in progress
 - Assert: stage completes without error
 
 #### Failure Injection
 
 - **Database init fails**: configure `maas` Vault credentials with wrong password before Stage 7; assert `maas init` failure is caught; assert error message surfaces database connectivity issue; assert `[VERIFY]` prompt appears
-- **DHCP config fails**: configure MAAS to point at a non-existent VLAN ID; assert MAAS API error is caught; assert `[VERIFY]` prompt with Unifi VLAN instructions appears
+- **DHCP conflict**: enable the opt-in in an isolated test network with another
+  DHCP responder; assert bootstrap refuses to enable MAAS
+- **DHCP activation rollback**: force the post-enable lease check to fail; assert
+  MAAS DHCP is disabled and the TUI displays the UniFi restoration step
 - **Image import non-blocking**: block outbound HTTP on QEMU VM after MAAS starts; assert image import failure emits warning (not error); assert stage completes despite image import failure
 
 #### Edge Cases
 
 - ARM64 QEMU VM: assert MAAS ARM64 snap/deb is installed; assert API starts correctly on ARM
-- Lab VLAN subnet conflicts with an existing MAAS subnet: assert MAAS API error is surfaced clearly; stage halts on DHCP step with `[VERIFY]` prompt
+- Lab VLAN subnet conflicts with an existing MAAS subnet: assert the Terraform
+  plan surfaces the conflict and no DHCP setting changes
 
 ---
 
@@ -978,6 +1033,8 @@ Terraform state migration is the formal completion event of the bootstrap proces
 6. `bootstrap-complete.json` is written only after operator confirms
 7. The completion summary TUI screen includes: Vault URL, GitLab URL, Authentik URL, Technitium URL, MAAS URL, location of `vault-init.json`, and the statement that all future changes go through `infrastructure/iac` GitOps
 8. Terraform project access token used for HTTP backend authentication is not present in any log file, TUI output, or `backend.tf` file on disk after migration (token is in Vault; `backend.tf` references the env var form)
+9. Each migrated state has the same lineage and serial in GitLab as the local state used to initiate migration
+10. A clean-bootstrap handoff requires no Terraform imports because Terraform created all Terraform-owned resources
 
 ### Failure Modes
 
@@ -1083,6 +1140,337 @@ Post-bootstrap service deployment is entirely GitOps-driven via the `infrastruct
 
 - Service with `authentik: false` and `allowed_groups: [adults]`: assert service is reachable directly; assert group enforcement is configured correctly at application level
 - Bare metal service (`target.maas_machine`): assert MAAS Terraform provider provisions machine; assert Ansible role is applied post-provision
+
+---
+
+## Cross-Cutting Flow: Reboot and Manual Unseal
+
+### Summary
+
+An ordinary reboot restores core platform services from protected runtime
+credentials while Vault remains sealed. The platform reports degraded status and
+fails Vault-dependent work closed. Masked manual unseal triggers reconciliation.
+The complete contract is in
+[`docs/reboot-recovery.md`](reboot-recovery.md).
+
+### Postconditions before unseal
+
+1. Technitium resolves private and external names.
+2. PostgreSQL, Authentik, and GitLab pass application-level health checks.
+3. MAAS and k3s start when configured, subject to their non-Vault dependencies.
+4. Vault process is reachable but reports sealed.
+5. Vault-dependent CI, providers, agents, secret delivery, and Raft snapshot
+   creation are paused or fail closed.
+6. Platform status is `degraded: Vault sealed`, never healthy.
+
+### Acceptance Criteria
+
+1. `bootstrap vault unseal` verifies pinned SSH and Vault cluster identity first.
+2. Shares use masked input and never enter arguments, shell history, logs,
+   manifests, temporary files, or crash output.
+3. Wrong shares preserve valid Vault progress and re-prompt safely.
+4. Successful unseal verifies Vault/Raft/audit health, OIDC, GitLab JWT, runtime
+   secret-version metadata, deferred checks, and missed Vault backup.
+5. Stale runtime copies produce a reviewed atomic reconciliation rather than a
+   silent overwrite/restart.
+6. Administrator absence leaves a stable documented degraded state.
+
+### Required Tests
+
+- Cold boot and core service health before unseal.
+- Vault-dependent GitLab job and new workload-secret delivery fail closed.
+- Correct, incorrect, reset-progress, and cluster-identity-change unseal paths.
+- Matching and stale runtime-copy reconciliation.
+- Complete/partial backup state before and after unseal.
+
+---
+
+## Cross-Cutting Flow: Backup and Recovery
+
+### Summary
+
+An Ansible-managed systemd timer creates native application-consistent artifacts
+and stores them in the configured encrypted Restic repository. The wizard
+presents the defaults and can disable or customize the feature. The full policy
+and restore order are defined in
+[`docs/backup-recovery.md`](backup-recovery.md).
+
+### Inputs
+
+| Input | Required | Default |
+|---|---|---|
+| `backup_enabled` | No | Wizard recommends `true`; structural default is `false` until a repository is supplied |
+| `backup_repository` | When enabled | No inferred value |
+| `backup_on_calendar` | No | Daily at 02:30 local |
+| Daily/weekly/monthly retention | No | `7 / 5 / 12` |
+| Metadata/full-data check intervals | No | Weekly / monthly |
+| USB repository and cadence | No | Disabled; monthly reminder when enabled |
+| Restore-drill interval | No | Quarterly |
+
+### Outputs / Postconditions
+
+1. Every successful run has a Restic snapshot ID and component manifest.
+2. Native artifacts cover Vault, PostgreSQL, GitLab, Authentik, Technitium,
+   MAAS, k3s when used, and bootstrap/GitOps recovery metadata.
+3. Missing or failed component artifacts mark the run incomplete.
+4. Retention, check, copy, and restore operations validate mount source and
+   repository ID.
+5. The status view reports last successful primary backup, last complete Vault
+   snapshot, integrity-check result, and offline-copy age.
+
+### Acceptance Criteria
+
+1. Wizard users can accept all defaults, change every interval/retention field,
+   or select `backup_enabled: false`.
+2. Headless enablement without a repository fails validation.
+3. A missing TrueNAS mount cannot result in a repository being written into the
+   empty local mount directory.
+4. The initial retention operation is dry-run-only; first large prune requires
+   explicit approval.
+5. USB copying validates filesystem UUID and both repository IDs, then verifies
+   and safely unmounts the destination.
+6. A NAS restore and a USB restore both pass in an isolated target.
+
+### Failure Modes
+
+| Failure | Recovery |
+|---|---|
+| TrueNAS unavailable or wrong mount | Stop before staging/backup; preserve live data and retry |
+| Native artifact fails | Complete other artifacts, mark snapshot set incomplete, retain staging evidence |
+| Vault sealed | Record incomplete Vault component and age of last valid Raft snapshot |
+| Repository integrity failure | Disable prune/copy, preserve repository, diagnose or recover from USB |
+| USB absent | Report offline-copy age; primary NAS backup remains successful |
+
+---
+
+## Cross-Cutting Flow: Upgrades and Maintenance
+
+### Summary
+
+Renovate proposes pinned application updates for normal GitLab review. A
+proposal that reaches its configurable deadline becomes `approved-by-policy`
+and is eligible in the next maintenance window. The host coordinator applies
+one component at a time and never lets elapsed time bypass safety gates. The
+complete contract is in [upgrade-policy.md](upgrade-policy.md).
+
+### Inputs
+
+| Input | Required | Default |
+|---|---|---|
+| `application_upgrades_enabled` | No | `true` |
+| `upgrade_maintenance_on_calendar` | No | Sunday 03:00 target local time |
+| `upgrade_maintenance_admission_window` | No | Three hours |
+| Critical/other security deadline | No | `3d / 7d` |
+| Patch-minor/major deadline | No | `21d / 30d` |
+| `os_security_updates_enabled` | No | `true` |
+| `os_automatic_reboot` | No | `false`; true is not accepted in v1 |
+
+### Acceptance Criteria
+
+1. Manual approval and deadline approval run the identical compatibility,
+   backup, capacity, health, migration, and rollback gates.
+2. A deadline labels the proposal `approved-by-policy`; it does not impersonate
+   a human reviewer.
+3. Only one component changes at a time and no new component starts after the
+   admission window closes.
+4. A failed gate makes no target mutation, preserves overdue state, and reports
+   the exact blocker.
+5. Trial mode permits stateless patch/minor immutable rollbacks but blocks
+   data-bearing and major upgrades.
+6. GitLab upgrades honor every required stop, pause Runner work, wait for
+   background migrations, and continue through a host executor that survives
+   GitLab downtime.
+7. K3s never skips unsupported minor versions, upgrades server nodes before
+   agents, and defaults to concurrency one.
+8. Ubuntu automatic security updates exclude third-party application
+   repositories and record—but never initiate—a required reboot.
+
+### Failure Modes
+
+| Failure | Recovery |
+|---|---|
+| Backup, health, compatibility, or capacity gate fails | Make no change; retain overdue state and retry preflight next window |
+| Stateless rollout health fails | Restore prior immutable artifact and verify health |
+| Failure after irreversible data migration | Stop; preserve diagnostics; require documented restore decision |
+| Window closes between safe steps | Finish current step and resume remaining path next window |
+| GitLab stops during its own upgrade | Host executor completes the current step independently |
+| Prior component upgrade failed | Block the remaining queue until resolved |
+
+---
+
+## Cross-Cutting Flow: Constrained Observability
+
+### Summary
+
+Uptime Kuma, Beszel hub/agent, and the bootstrap health adapter run on the
+target. TrueNAS supplies only Restic storage. Paging is independently
+configurable and disableable. The full contract is in
+[observability.md](observability.md).
+
+### Inputs
+
+| Input | Required | Default |
+|---|---|---|
+| `monitoring_enabled` | No | `true` |
+| Critical / ordinary check interval | No | `60s / 5m` |
+| Kuma and journal retention | No | `7d / 7d` |
+| Memory / CPU / state budget | No | `512 MiB / 50% of one core / 5 GiB` |
+| `paging_enabled` | No | `false` until a destination test succeeds |
+| Paging provider | When paging enabled | Discord, Telegram, ntfy, or generic webhook |
+| Failure counts / resource sustain | No | `3 / 3 / 15m` |
+| Disk warning / critical | No | `85% / 95%` |
+| Critical reminder | No | `6h` |
+
+### Acceptance Criteria
+
+1. Kuma materializes HTTP, TCP, DNS, certificate, and push checks from platform
+   and service-definition intent.
+2. Beszel records the accepted CPU, memory, disk/I/O, network, systemd,
+   container, temperature, and SMART subset through a local Unix-socket agent.
+3. History observes Kuma's seven-day cap and Beszel's one-minute through
+   eight-hour aggregation tiers.
+4. The stack remains inside configurable CPU, memory, and disk limits on x86_64
+   and ARM64; optional collectors and noncritical cadence shed before core
+   checks.
+5. Discord, Telegram, ntfy, and webhook credentials pass masked entry and a
+   test notification before paging is enabled.
+6. `paging_enabled: false` preserves dashboards and reports
+   `monitoring active; paging disabled`.
+7. Maintenance and dependency suppression prevent cascaded noise; sustained
+   thresholds, reminders, and recovery notifications follow the selected
+   policy.
+8. No observability workload is scheduled on TrueNAS.
+9. A full target outage is documented as locally unpageable rather than
+   reported as covered.
+
+### Failure Modes
+
+| Failure | Recovery |
+|---|---|
+| Notification test fails | Keep paging disabled; retry or select dashboard-only mode |
+| Kuma or Beszel exceeds budget | Shed optional collection/cadence and mark telemetry degraded |
+| Individual monitor fails | Apply debounce/dependency rules, page when configured, send one recovery |
+| Monitoring state corrupt | Restore configuration; metric history is optional recovery data |
+| Whole target/power/network fails | No local page is possible; retain the documented boundary |
+
+---
+
+## Cross-Cutting Flow: GitLab Loss and GitOps Recovery
+
+### Summary
+
+GitLab recovery combines a nightly full-instance set with an encrypted critical
+checkpoint after each successful apply. An incident freeze blocks every
+Terraform/GitOps mutation until exact-version restoration, optional newer
+checkpoint reconciliation, verification, and explicit unfreeze. The complete
+contract is in
+[gitlab-disaster-recovery.md](gitlab-disaster-recovery.md).
+
+### Inputs
+
+| Input | Required | Default |
+|---|---|---|
+| Full GitLab backup schedule | No | Part of nightly 02:30 backup |
+| `gitlab_checkpoint_after_apply` | No | `true` when a primary repository exists |
+| `gitlab_freeze_iac_when_unavailable` | No | `true` |
+| Full backup selection | Restore only | Operator selects complete verified set |
+| Critical checkpoint selection | Restore only | Newest compatible commit/lineage/serial |
+| Incident ID and unfreeze approval | Restore only | Required |
+
+### Acceptance Criteria
+
+1. Nightly protection contains the native GitLab archive, isolated database,
+   configuration, secrets, TLS/SSH identity, Runner metadata, exact
+   version/edition/package artifact and hashes, and one manifest.
+2. Every successful apply creates and verifies Git bundles plus decrypted state
+   for its applied commit, lineage, and serial in encrypted Restic.
+3. Plaintext state and bundles exist only in root-only tmpfs and are absent
+   after success or failure cleanup.
+4. GitLab unavailability places a freeze marker honored by Runner, Terraform,
+   GitOps, upgrade, and maintenance workflows.
+5. Restore installs the exact version/edition and replaces only GitLab's
+   isolated shared-PostgreSQL database.
+6. A newer checkpoint reconciles only matching commit graphs and Terraform
+   workspace/lineage/serial; conflicts require review.
+7. Login, repository, clone/push, state re-download, read-only plan,
+   decryption, Runner, backup, and monitoring checks pass before unfreeze.
+8. Local Terraform state is break-glass-only and must reconcile back into
+   GitLab before normal automation resumes.
+9. Trial mode reports that post-apply checkpoints are not protected and may use
+   the one-time encrypted controller export.
+
+### Failure Modes
+
+| Failure | Recovery |
+|---|---|
+| Missing config/secrets or wrong version/package | Block restore before mutation |
+| Native restore fails | Keep freeze, preserve evidence, and allow bounded retry |
+| Git bundle diverges | Stop automatic ref import and require review |
+| Terraform lineage/serial conflicts | Keep base restored state and require state-selection review |
+| Verification fails | Keep all automation frozen |
+| Checkpoint fails after apply | Keep live infrastructure, report/page recovery gap, retry checkpoint |
+
+---
+
+## Cross-Cutting Flow: Controller Laptop Recovery
+
+### Summary
+
+A blank replacement laptop uses a verified bootstrap release, the password
+manager, a verified Restic repository, and target access. It reconstructs
+portable local state, verifies the pinned target identity, performs a read-only
+audit, and requires explicit adoption. The complete contract is in
+[controller-recovery.md](controller-recovery.md).
+
+### Inputs
+
+| Input | Required | Default |
+|---|---|---|
+| Verified bootstrap release or preserved artifact | Yes | Newest compatible verified artifact from bundle |
+| Restic repository and password | Yes for automated recovery | Expected repository ID from operator records |
+| Controller recovery password | When SSH key included | Password-manager entry; distinct from Restic |
+| Target network or console access | Yes | Existing network access |
+| Recovery mode | Yes at adoption | Old controller unavailable |
+| Vault recovery material | For Vault unseal only | Entered separately; never sourced from bundle |
+
+### Acceptance Criteria
+
+1. Initial bootstrap and every material controller/configuration change create
+   a schema-versioned, hashed, encrypted bundle.
+2. The newest bundle joins nightly backups and every post-apply critical
+   checkpoint.
+3. The bundle contains portable configuration, target fingerprint,
+   controller/target markers, backend/ownership metadata, run manifests, and a
+   verified bootstrap artifact.
+4. The included SSH private key requires both Restic access and the separate
+   controller recovery password.
+5. `vault-init.json`, Shamir shares, Restic passwords, and plaintext `.env`
+   contents are absent.
+6. Recovery rebinds laptop-specific paths and writes all protected local files
+   with mode `0600`.
+7. Existing-target recovery rejects a changed SSH fingerprint before
+   authentication and uses the explicit changed-key flow for an intentional
+   target replacement.
+8. No remote mutation occurs during the audit; adoption requires the target
+   name and selected mode.
+9. Unavailable mode preserves old credentials and warns if the old controller
+   was recently active.
+10. Lost-or-compromised mode verifies replacement SSH/token access before
+    revoking prior access and reports any incomplete rotation.
+11. A new bundle is restore-opened and verified before recovery completes.
+12. Trial mode can create a verified external export but remains unprotected
+    when the only copy is on the controller laptop.
+
+### Failure Modes
+
+| Failure | Recovery |
+|---|---|
+| Repository ID, bundle hash/schema, or target ID differs | Stop and require source/target selection review |
+| Saved SSH fingerprint differs | Stop before authentication; use explicit changed-key recovery |
+| SSH key envelope cannot open | Offer new-key enrollment through physical or already trusted access |
+| Another controller is recently active | Warn and require explicit adoption; do not auto-revoke |
+| Credential rotation partly fails | Preserve verified replacement access and list unrevoked credentials |
+| New recovery checkpoint fails | Keep adoption but mark controller protection degraded |
 
 ---
 

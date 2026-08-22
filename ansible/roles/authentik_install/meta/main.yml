@@ -3,6 +3,7 @@ galaxy_info:
   role_name: authentik_install
   author: bootstrap-home-infra
   description: Deploy Authentik SSO via Docker Compose with bundled or external PostgreSQL
+  license: MIT
   min_ansible_version: "2.14"
   platforms:
     - name: Ubuntu

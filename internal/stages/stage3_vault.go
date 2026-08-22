@@ -19,8 +19,8 @@ type VaultStage struct{}
 func (s *VaultStage) Name() string { return "vault" }
 
 // Check verifies Vault is running and unsealed on the target.
-func (s *VaultStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+func (s *VaultStage) Check(_ context.Context, cfg *config.Config, rc *runcontext.RunContext) (bool, error) {
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return false, err
 	}
@@ -39,8 +39,8 @@ func (s *VaultStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.
 }
 
 // Run deploys and configures Vault via Ansible.
-func (s *VaultStage) Run(_ context.Context, cfg *config.Config, _ *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+func (s *VaultStage) Run(_ context.Context, cfg *config.Config, _ *config.Secrets, rc *runcontext.RunContext, sink stage.Sink) error {
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return err
 	}
@@ -57,6 +57,7 @@ func (s *VaultStage) Run(_ context.Context, cfg *config.Config, _ *config.Secret
 			"vault_threshold":        intToStr(cfg.VaultThreshold),
 			"admin_email":            cfg.AdminEmail,
 			"vault_init_output_path": cfg.VaultInitOutputPath,
+			"service_data_root":      cfg.DataPath(),
 		},
 	)
 }

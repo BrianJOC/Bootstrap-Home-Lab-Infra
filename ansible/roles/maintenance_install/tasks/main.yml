@@ -1,0 +1,59 @@
+---
+- name: Install Ubuntu security-update support
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - jq
+    state: present
+    update_cache: true
+  when: os_security_updates_enabled | bool
+
+- name: Configure security-only unattended upgrades
+  ansible.builtin.template:
+    src: 52bootstrap-home-infra.j2
+    dest: /etc/apt/apt.conf.d/52bootstrap-home-infra
+    mode: "0644"
+
+- name: Create protected maintenance directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/bootstrap-home-infra/upgrade-proposals, mode: "0700" }
+    - { path: /usr/local/lib/bootstrap-home-infra/upgrade-hooks, mode: "0700" }
+    - { path: /var/lib/bootstrap-home-infra/upgrades, mode: "0700" }
+
+- name: Write effective deadline policy
+  ansible.builtin.template:
+    src: upgrade-policy.json.j2
+    dest: /etc/bootstrap-home-infra/upgrade-policy.json
+    mode: "0600"
+
+- name: Install maintenance coordinator
+  ansible.builtin.template:
+    src: bootstrap-maintenance.sh.j2
+    dest: /usr/local/sbin/bootstrap-maintenance
+    mode: "0700"
+
+- name: Install maintenance systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - bootstrap-maintenance.service
+    - bootstrap-maintenance.timer
+
+- name: Apply application-maintenance timer policy
+  ansible.builtin.systemd:
+    name: bootstrap-maintenance.timer
+    state: "{{ 'started' if application_upgrades_enabled | bool else 'stopped' }}"
+    enabled: "{{ application_upgrades_enabled | bool }}"
+    daemon_reload: true
+
+- name: Enable Ubuntu unattended upgrades without automatic reboot
+  ansible.builtin.systemd:
+    name: unattended-upgrades.service
+    enabled: "{{ os_security_updates_enabled | bool }}"
+  when: os_security_updates_enabled | bool

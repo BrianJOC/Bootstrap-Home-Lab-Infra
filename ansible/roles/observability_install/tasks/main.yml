@@ -1,0 +1,119 @@
+---
+- name: Create constrained observability directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0700"
+  loop:
+    - /opt/bootstrap-observability
+    - /opt/bootstrap-observability/uptime-kuma
+    - /opt/bootstrap-observability/beszel
+    - /opt/bootstrap-observability/beszel-agent
+    - /opt/bootstrap-observability/beszel-socket
+    - /var/lib/bootstrap-home-infra/health
+  when: monitoring_enabled | bool
+
+- name: Install constrained observability compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /opt/bootstrap-observability/docker-compose.yml
+    mode: "0600"
+  when: monitoring_enabled | bool
+
+- name: Start observability hubs
+  community.docker.docker_compose_v2:
+    project_src: /opt/bootstrap-observability
+    services:
+      - uptime-kuma
+      - beszel
+    state: present
+  when: monitoring_enabled | bool
+
+- name: Wait for Beszel hub key endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8090/api/beszel/getkey
+    status_code: 200
+  register: beszel_hub_key
+  retries: 24
+  delay: 5
+  until: beszel_hub_key.status == 200
+  when: monitoring_enabled | bool
+
+- name: Store Beszel hub public key for the local agent
+  ansible.builtin.copy:
+    content: "KEY={{ beszel_hub_key.json.key | default(beszel_hub_key.json) }}\n"
+    dest: /opt/bootstrap-observability/beszel-agent.env
+    mode: "0600"
+  no_log: true
+  when: monitoring_enabled | bool
+
+- name: Start local Beszel agent
+  community.docker.docker_compose_v2:
+    project_src: /opt/bootstrap-observability
+    services:
+      - beszel-agent
+    state: present
+  when: monitoring_enabled | bool
+
+- name: Create protected paging directory
+  ansible.builtin.file:
+    path: /etc/bootstrap-home-infra/paging
+    state: directory
+    mode: "0700"
+  when: paging_enabled | bool
+
+- name: Store paging destination outside arguments and unit text
+  ansible.builtin.copy:
+    content: "url = {{ paging_destination_url | to_json }}\n"
+    dest: /etc/bootstrap-home-infra/paging/curl.conf
+    mode: "0600"
+  no_log: true
+  when: paging_enabled | bool
+
+- name: Install platform health adapter
+  ansible.builtin.template:
+    src: bootstrap-health-adapter.sh.j2
+    dest: /usr/local/sbin/bootstrap-health-adapter
+    mode: "0700"
+
+- name: Install health-adapter systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - bootstrap-health-adapter.service
+    - bootstrap-health-adapter.timer
+
+- name: Install observability compose service
+  ansible.builtin.template:
+    src: bootstrap-observability.service.j2
+    dest: /etc/systemd/system/bootstrap-observability.service
+    mode: "0644"
+
+- name: Apply observability service policy
+  ansible.builtin.systemd:
+    name: bootstrap-observability.service
+    state: "{{ 'started' if monitoring_enabled | bool else 'stopped' }}"
+    enabled: "{{ monitoring_enabled | bool }}"
+    daemon_reload: true
+
+- name: Apply health-adapter timer policy
+  ansible.builtin.systemd:
+    name: bootstrap-health-adapter.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Limit local journal retention
+  ansible.builtin.template:
+    src: bootstrap-retention.conf.j2
+    dest: /etc/systemd/journald.conf.d/bootstrap-retention.conf
+    mode: "0644"
+  notify: restart journald
+
+- name: Record lifecycle installation
+  ansible.builtin.file:
+    path: /var/lib/bootstrap-home-infra/lifecycle-configured
+    state: touch
+    mode: "0600"

@@ -1,0 +1,15 @@
+---
+backup_enabled: false
+backup_repository: ""
+backup_on_calendar: "*-*-* 02:30:00"
+backup_keep_daily: 7
+backup_keep_weekly: 5
+backup_keep_monthly: 12
+backup_metadata_check_interval: weekly
+backup_full_check_interval: monthly
+backup_retention_approved: false
+backup_usb_enabled: false
+backup_usb_repository: ""
+backup_usb_copy_interval: monthly
+restic_primary_password: ""
+restic_usb_password: ""

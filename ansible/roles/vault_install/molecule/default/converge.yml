@@ -7,6 +7,7 @@
       vars:
         internal_domain: home.test
         bootstrap_server_ip: "127.0.0.1"
+        service_data_root: /var/lib/bootstrap-test
         # Test-only credential — never use in production.
         admin_password: "TestPassword123!"
         # Write vault-init.json to a temp location rather than the repo root in Molecule.

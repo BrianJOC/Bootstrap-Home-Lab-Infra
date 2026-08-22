@@ -20,4 +20,5 @@ gitlab_db_password: >-
 # OIDC client secret for Authentik integration — set once OIDC provider is wired.
 # Leave empty to skip OIDC configuration in gitlab.rb.
 gitlab_oidc_client_id: "gitlab"
-gitlab_oidc_secret: ""
+gitlab_oidc_secret: >-
+  {{ lookup('file', lookup('env', 'HOME') + '/.bootstrap/oidc-gitlab-secret') | trim }}

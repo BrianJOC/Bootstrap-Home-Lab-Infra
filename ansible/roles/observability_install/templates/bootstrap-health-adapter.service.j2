@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect platform health and route optional local paging
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bootstrap-health-adapter
+MemoryMax=32M
+CPUQuota=5%
+PrivateTmp=yes
+ProtectHome=yes

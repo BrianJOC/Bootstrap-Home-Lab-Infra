@@ -1,0 +1,57 @@
+name: source-gates
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Reject merge-conflict markers
+        run: |
+          if rg -n '^(<{7}|={7}|>{7})( |$)' --glob '!reports/**' .; then
+            exit 1
+          fi
+      - name: Check formatting
+        run: test -z "$(gofmt -l cmd internal)"
+      - run: go test ./cmd/... ./internal/...
+      - run: go build ./...
+      - run: go vet ./...
+
+  ansible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the Hermit-pinned Ansible test toolchain
+        run: bin/just dev-setup
+      - name: Syntax check complete stage chain
+        run: >-
+          .venv/bin/ansible-playbook --syntax-check ansible/playbooks/site.yml
+          -i 'bootstrap_target,'
+          -e bootstrap_server_ip=127.0.0.1
+          -e internal_domain=home.example.com
+      - run: .venv/bin/ansible-lint ansible/playbooks ansible/roles
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive terraform
+      - name: Validate roots and modules
+        run: |
+          for directory in terraform/environments/bootstrap terraform/modules/*; do
+            [ -d "$directory" ] || continue
+            terraform -chdir="$directory" init -backend=false -input=false
+            terraform -chdir="$directory" validate
+          done

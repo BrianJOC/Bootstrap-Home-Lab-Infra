@@ -18,6 +18,7 @@ func completeConfig() *config.Config {
 		CloudflareZoneID:  "abc123",
 		BootstrapServerIP: "192.168.1.100",
 		LabVLANSubnet:     "10.0.0.0/24",
+		LabGateway:        "10.0.0.1",
 		AdminEmail:        "admin@example.com",
 		VaultShares:       5,
 		VaultThreshold:    3,
@@ -43,10 +44,11 @@ func TestWriteConfigYAML(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	content := string(data)
 	for _, want := range []string{
-		`target_host: "192.168.1.100"`,
-		`ssh_user: "ubuntu"`,
-		`internal_domain: "home.lab"`,
-		`bootstrap_server_ip: "192.168.1.100"`,
+		`target_host: 192.168.1.100`,
+		`ssh_user: ubuntu`,
+		`internal_domain: home.lab`,
+		`bootstrap_server_ip: 192.168.1.100`,
+		`lab_gateway: 10.0.0.1`,
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("config.yaml missing %q\ngot:\n%s", want, content)
@@ -96,10 +98,10 @@ func TestWriteEnvFile(t *testing.T) {
 
 	data, _ := os.ReadFile(path)
 	content := string(data)
-	if !strings.Contains(content, "CF_DNS_API_TOKEN=tok-xyz") {
+	if !strings.Contains(content, `CF_DNS_API_TOKEN="tok-xyz"`) {
 		t.Errorf("missing CF_DNS_API_TOKEN, got:\n%s", content)
 	}
-	if !strings.Contains(content, "BOOTSTRAP_ADMIN_PASSWORD=s3cr3t") {
+	if !strings.Contains(content, `BOOTSTRAP_ADMIN_PASSWORD="s3cr3t"`) {
 		t.Errorf("missing BOOTSTRAP_ADMIN_PASSWORD, got:\n%s", content)
 	}
 

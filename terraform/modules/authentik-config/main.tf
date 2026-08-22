@@ -3,7 +3,7 @@ terraform {
   required_providers {
     authentik = {
       source  = "goauthentik/authentik"
-      version = "~> 2024.2.0"  # patch-pinned to avoid breaking redirect_uris schema change in 2024.6+
+      version = "~> 2024.2.0" # patch-pinned to avoid breaking redirect_uris schema change in 2024.6+
     }
   }
 }
@@ -79,8 +79,8 @@ resource "authentik_policy_binding" "app_group" {
     for entry in flatten([
       for s in var.services : [
         for g in s.groups : {
-          key  = "${s.name}-${g}"
-          app  = s.name
+          key   = "${s.name}-${g}"
+          app   = s.name
           group = g
         }
       ]

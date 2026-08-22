@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec 9>/run/lock/bootstrap-backup.lock
+flock -n 9 || exit 0
+
+state=/var/lib/bootstrap-home-infra
+staging="$(mktemp -d "$state/backup-staging.XXXXXX")"
+complete=true
+cleanup() {
+  if [ "$complete" = true ]; then
+    rm -rf "$staging"
+  fi
+}
+trap cleanup EXIT
+
+if [[ "$RESTIC_REPOSITORY" == /mnt/* ]]; then
+  findmnt --target "$RESTIC_REPOSITORY" >/dev/null
+fi
+expected="$(< /etc/bootstrap-home-infra/backup/primary-repository-id)"
+actual="$(restic cat config | sha256sum | awk '{print $1}')"
+test "$actual" = "$expected"
+
+install -d -m 0700 "$staging/postgresql" "$staging/config"
+sudo -u postgres pg_dumpall --globals-only > "$staging/postgresql/globals.sql"
+while IFS= read -r database; do
+  sudo -u postgres pg_dump --format=custom --file="$staging/postgresql/$database.dump" "$database"
+done < <(sudo -u postgres psql -Atc "select datname from pg_database where datistemplate = false")
+
+if command -v gitlab-backup >/dev/null; then
+  gitlab-backup create CRON=1
+  install -d -m 0700 "$staging/gitlab"
+  latest_gitlab_backup="$(find /var/opt/gitlab/backups -maxdepth 1 -type f -name '*_gitlab_backup.tar' -print0 | xargs -0 ls -1t | head -1)"
+  test -n "$latest_gitlab_backup"
+  cp "$latest_gitlab_backup" "$staging/gitlab/"
+  cp -a /etc/gitlab/gitlab-secrets.json /etc/gitlab/gitlab.rb "$staging/gitlab/"
+  cp -a /etc/gitlab-runner "$staging/gitlab/" 2>/dev/null || true
+  dpkg-query -W gitlab-ce gitlab-runner > "$staging/gitlab/package-versions"
+fi
+if command -v k3s >/dev/null && systemctl is-active --quiet k3s; then
+  k3s etcd-snapshot save --name "restic-$(date -u +%Y%m%dT%H%M%SZ)"
+fi
+cp -a /etc/technitium /etc/vault.d /etc/gitlab /etc/rancher "$staging/config/" 2>/dev/null || true
+cp -a /opt/authentik "$staging/config/" 2>/dev/null || true
+cp -a /var/lib/bootstrap-home-infra/controller-recovery "$staging/config/" 2>/dev/null || true
+find /var/lib/bootstrap-home-infra -maxdepth 2 -type f \
+  ! -path '*/backup-staging.*/*' -name '*status*' \
+  -exec cp --parents '{}' "$staging/config/" ';' 2>/dev/null || true
+
+if [ -s /etc/bootstrap-home-infra/vault-backup-token ]; then
+  export VAULT_TOKEN="$(< /etc/bootstrap-home-infra/vault-backup-token)"
+  export VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true
+  vault token renew -self >/dev/null
+  vault operator raft snapshot save "$staging/vault.snap"
+  unset VAULT_TOKEN
+else
+  complete=false
+  printf '%s\n' "incomplete: Vault snapshot unavailable while sealed or uncredentialed" > "$staging/INCOMPLETE"
+fi
+
+snapshot="$(restic backup --json "$staging" | awk -F'"' '/snapshot_id/{print $4}' | tail -1)"
+restic snapshots --json | grep -q "$snapshot"
+
+if [ -f /etc/bootstrap-home-infra/backup/retention-approved ]; then
+  restic forget \
+    --keep-daily={{ backup_keep_daily | int }} \
+    --keep-weekly={{ backup_keep_weekly | int }} \
+    --keep-monthly={{ backup_keep_monthly | int }}
+else
+  restic forget --dry-run \
+    --keep-daily={{ backup_keep_daily | int }} \
+    --keep-weekly={{ backup_keep_weekly | int }} \
+    --keep-monthly={{ backup_keep_monthly | int }} > "$state/retention-dry-run"
+fi
+
+weekday="$(date +%u)"
+day="$(date +%d)"
+if [ {{ (backup_metadata_check_interval == 'weekly') | ternary('1', '0') }} -eq 1 ] && [ "$weekday" = 7 ]; then
+  restic check
+fi
+if [ {{ (backup_full_check_interval == 'monthly') | ternary('1', '0') }} -eq 1 ] && [ "$day" = 01 ]; then
+  restic check --read-data
+fi
+
+printf 'snapshot=%s complete=%s finished=%s\n' "$snapshot" "$complete" "$(date -u +%FT%TZ)" > "$state/backup-status"
+test "$complete" = true

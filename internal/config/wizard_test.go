@@ -1,8 +1,8 @@
 package config_test
 
 import (
-	"testing"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"testing"
 )
 
 func baseWizardResult() config.WizardResult {
@@ -18,8 +18,9 @@ func baseWizardResult() config.WizardResult {
 			"admin_email":         "admin@example.com",
 		},
 		Secrets: map[string]string{
-			"CF_DNS_API_TOKEN":         "tok-abc",
-			"BOOTSTRAP_ADMIN_PASSWORD": "hunter2",
+			"CF_DNS_API_TOKEN":             "tok-abc",
+			"BOOTSTRAP_ADMIN_PASSWORD":     "hunter2",
+			"CONTROLLER_RECOVERY_PASSWORD": "separate-controller-secret",
 		},
 	}
 }
@@ -31,16 +32,16 @@ func TestFromWizardResult(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	tests := []struct{ name, got, want string }{
-		{"TargetHost",        rc.TargetHost,        "192.168.1.50"},
-		{"SSHUser",           rc.SSHUser,           "ubuntu"},
-		{"SSHKeyPath",        rc.SSHKeyPath,        "/home/user/.ssh/id_ed25519"},
-		{"InternalDomain",    rc.InternalDomain,    "home.lab"},
-		{"CloudflareZoneID",  rc.CloudflareZoneID,  "abc123"},
+		{"TargetHost", rc.TargetHost, "192.168.1.50"},
+		{"SSHUser", rc.SSHUser, "ubuntu"},
+		{"SSHKeyPath", rc.SSHKeyPath, "/home/user/.ssh/id_ed25519"},
+		{"InternalDomain", rc.InternalDomain, "home.lab"},
+		{"CloudflareZoneID", rc.CloudflareZoneID, "abc123"},
 		{"BootstrapServerIP", rc.BootstrapServerIP, "192.168.1.50"},
-		{"LabVLANSubnet",     rc.LabVLANSubnet,     "10.0.0.0/24"},
-		{"AdminEmail",        rc.AdminEmail,        "admin@example.com"},
-		{"CloudflareToken",   rc.Secrets.CloudflareAPIToken, "tok-abc"},
-		{"AdminPassword",     rc.Secrets.AdminPassword,      "hunter2"},
+		{"LabVLANSubnet", rc.LabVLANSubnet, "10.0.0.0/24"},
+		{"AdminEmail", rc.AdminEmail, "admin@example.com"},
+		{"CloudflareToken", rc.Secrets.CloudflareAPIToken, "tok-abc"},
+		{"AdminPassword", rc.Secrets.AdminPassword, "hunter2"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

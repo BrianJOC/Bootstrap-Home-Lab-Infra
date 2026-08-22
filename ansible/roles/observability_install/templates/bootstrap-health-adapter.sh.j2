@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+set -uo pipefail
+
+state=/var/lib/bootstrap-home-infra/health
+mkdir -p "$state"
+tmp="$(mktemp)"
+now="$(date -u +%FT%TZ)"
+overall=healthy
+failures=()
+
+check() {
+  local name="$1"
+  shift
+  if "$@" >/dev/null 2>&1; then
+    printf '%s\n' 0 > "$state/$name.failures"
+    return
+  fi
+  overall=degraded
+  count=0
+  [ ! -f "$state/$name.failures" ] || count="$(< "$state/$name.failures")"
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$state/$name.failures"
+  failures+=("$name:$count")
+}
+
+check dns-internal getent hosts "vault.{{ internal_domain }}"
+check dns-external getent hosts example.com
+check postgresql pg_isready -h 127.0.0.1
+check vault curl --fail --silent --show-error "https://vault.{{ internal_domain }}:8200/v1/sys/health"
+check authentik curl --fail --silent "http://127.0.0.1:9000/api/v3/root/config/"
+if command -v gitlab-ctl >/dev/null; then
+  check gitlab curl --fail --silent "http://127.0.0.1/-/readiness"
+fi
+if command -v maas >/dev/null; then
+  check maas curl --fail --silent "http://127.0.0.1:5240/MAAS/api/2.0/"
+fi
+if command -v k3s >/dev/null; then
+  check k3s k3s kubectl get --raw=/readyz
+fi
+if [ {{ monitoring_enabled | bool | ternary('1', '0') }} -eq 1 ]; then
+  check uptime-kuma curl --fail --silent http://127.0.0.1:3001
+  check beszel curl --fail --silent http://127.0.0.1:8090/api/health
+fi
+check certificate openssl x509 -checkend 604800 -noout -in "/opt/certs/certificates/_.{{ internal_domain }}.crt"
+
+disk_percent="$(df --output=pcent / | tail -1 | tr -dc '0-9')"
+if [ "$disk_percent" -ge {{ paging_disk_warning_percent | int }} ]; then
+  overall=degraded
+  failures+=("disk:${disk_percent}%")
+fi
+memory_used="$(free -b | awk '/Mem:/{printf "%.0f", ($3/$2)*100}')"
+load="$(cut -d' ' -f1 /proc/loadavg)"
+rx_bytes="$(awk -F'[: ]+' 'NR>2 {sum += $3} END {print sum+0}' /proc/net/dev)"
+tx_bytes="$(awk -F'[: ]+' 'NR>2 {sum += $11} END {print sum+0}' /proc/net/dev)"
+observability_bytes="$(du -sb /opt/bootstrap-observability 2>/dev/null | awk '{print $1+0}')"
+observability_limit="$(({{ observability_storage_limit_gb | int }} * 1024 * 1024 * 1024))"
+if [ "$observability_bytes" -gt "$observability_limit" ]; then
+  overall=degraded
+  failures+=("observability-storage-budget")
+  docker stop beszel-agent >/dev/null 2>&1 || true
+fi
+
+printf '{"timestamp":"%s","status":"%s","cpu_load":%s,"memory_used_percent":%s,"root_disk_percent":%s,"network_rx_bytes":%s,"network_tx_bytes":%s,"observability_bytes":%s,"failures":"%s"}\n' \
+  "$now" "$overall" "$load" "$memory_used" "$disk_percent" "$rx_bytes" "$tx_bytes" "$observability_bytes" "${failures[*]}" > "$tmp"
+mv "$tmp" "$state/status.json"
+
+{% if paging_enabled | bool %}
+page=false
+for failure in "${failures[@]}"; do
+  count="${failure##*:}"
+  [[ "$count" =~ ^[0-9]+$ ]] || continue
+  if [ "$count" -ge {{ paging_critical_failures | int }} ]; then
+    page=true
+  fi
+done
+if [ "$disk_percent" -ge {{ paging_disk_critical_percent | int }} ]; then
+  page=true
+fi
+previous=healthy
+[ ! -f "$state/last-status" ] || previous="$(< "$state/last-status")"
+message="homelab status=$overall failures=${failures[*]:-none} dashboard=https://uptime.{{ internal_domain }}"
+if [ "$page" = true ] || { [ "$overall" = healthy ] && [ "$previous" != healthy ] && [ {{ paging_recovery_notifications | bool | ternary('1', '0') }} -eq 1 ]; }; then
+  case {{ paging_provider | quote }} in
+    discord) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf -H 'Content-Type: application/json' --data "$(jq -nc --arg content "$message" '{content:$content}')" >/dev/null ;;
+    ntfy) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf --data-binary "$message" >/dev/null ;;
+    telegram) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf --data-urlencode "text=$message" >/dev/null ;;
+    webhook) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf -H 'Content-Type: application/json' --data "$(jq -nc --arg message "$message" '{message:$message}')" >/dev/null ;;
+  esac
+fi
+printf '%s\n' "$overall" > "$state/last-status"
+{% endif %}

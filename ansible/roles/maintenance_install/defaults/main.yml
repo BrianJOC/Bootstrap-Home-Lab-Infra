@@ -1,0 +1,10 @@
+---
+application_upgrades_enabled: true
+upgrade_maintenance_on_calendar: "Sun *-*-* 03:00:00"
+upgrade_maintenance_admission_window: 3h
+upgrade_critical_security_deadline: 3d
+upgrade_security_deadline: 7d
+upgrade_patch_minor_deadline: 21d
+upgrade_major_deadline: 30d
+os_security_updates_enabled: true
+os_automatic_reboot: false

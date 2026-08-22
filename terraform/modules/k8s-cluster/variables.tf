@@ -9,26 +9,15 @@ variable "nodes" {
     address = string
     roles   = list(string) # valid values: "control-plane", "worker"
   }))
-  description = "Nodes to include in the cluster. Provisioning is handled externally."
+  description = "Nodes in the Ansible-installed cluster."
 }
 
-variable "ssh_user" {
+variable "endpoint" {
   type        = string
-  description = "SSH username for connecting to cluster nodes"
+  description = "Verified Kubernetes API endpoint."
 }
 
-variable "ssh_key_path" {
+variable "kubeconfig_vault_path" {
   type        = string
-  description = "Absolute path to the SSH private key for connecting to cluster nodes"
-}
-
-variable "k3s_version" {
-  type        = string
-  default     = "v1.29.0+k3s1"
-  description = "k3s version to install on all cluster nodes"
-}
-
-variable "internal_domain" {
-  type        = string
-  description = "Internal domain (e.g. home.example.com); used in TLS SANs"
+  description = "Vault KV path containing the protected kubeconfig written by the Stage 8 workflow."
 }

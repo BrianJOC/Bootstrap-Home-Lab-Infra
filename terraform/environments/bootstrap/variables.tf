@@ -31,7 +31,7 @@ variable "dns_records" {
     ttl   = optional(number, 300)
   }))
   description = "DNS records to create for all bootstrap services"
-  default = []
+  default     = []
 }
 
 # ── Vault ─────────────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ variable "authentik_services" {
     groups       = list(string)
   }))
   description = "OIDC services to register in Authentik"
-  default = []
+  default     = []
 }
 
 # ── GitLab ────────────────────────────────────────────────────────────────────
@@ -129,4 +129,10 @@ variable "dhcp_range_low" {
 variable "dhcp_range_high" {
   type        = string
   description = "End IP of the MAAS DHCP dynamic range"
+}
+
+variable "maas_dhcp_enabled" {
+  type        = bool
+  default     = false
+  description = "Opt in to MAAS DHCP on the validated lab VLAN."
 }

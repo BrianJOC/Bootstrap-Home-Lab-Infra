@@ -1,0 +1,4 @@
+# Top-level Python test tools. Hermit's pinned uv compiles the hashed lockfile.
+ansible-core==2.21.2
+ansible-lint==26.6.0
+molecule==26.6.0

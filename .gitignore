@@ -16,6 +16,10 @@ vault-init.json
 # Runtime config with secrets — never commit
 .env
 
+# Operator-specific controller topology and local key paths
+config.yaml
+test/config-ssd.yaml
+
 # Test config backups
 config.yaml.bak
 
@@ -23,6 +27,10 @@ config.yaml.bak
 *.exe
 *.test
 vendor/
+
+# Terraform provider and module working directories. Lockfiles remain tracked
+# candidates because these modules are also applied as standalone roots.
+**/.terraform/
 
 # Logs
 logs/
@@ -32,6 +40,9 @@ packer_cache/
 
 # Molecule
 .molecule/
+.hermit/
+.venv/
+ansible/collections/
 
 # Git worktrees
 .worktrees/

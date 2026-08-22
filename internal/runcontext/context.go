@@ -32,6 +32,17 @@ type RunContext struct {
 	// Stage 0 writes secrets here; see ConfigPath rationale above.
 	EnvPath string
 
+	// KnownHostsPath is the bootstrap-owned strict SSH trust store shared by Go
+	// and Ansible.
+	KnownHostsPath string
+
+	// Host-key policy flags are runtime intent and are never persisted in
+	// structural configuration.
+	Headless         bool
+	AcceptNewHostKey bool
+	ReplaceHostKey   bool
+	ApproveTerraform bool
+
 	// StagesDone tracks which stages completed successfully in this run.
 	StagesDone map[string]bool
 }

@@ -4,6 +4,10 @@ maas_port: 5240
 maas_admin_user: maas-admin
 maas_health_timeout: 300
 maas_health_interval: 5
+maas_dhcp_enabled: false
+lab_vlan_interface: ""
+dhcp_range_low: ""
+dhcp_range_high: ""
 
 # MAAS DB password — persisted on controller at ~/.bootstrap/.
 # Must match pg-maas-password used by postgresql_install role.

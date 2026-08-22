@@ -1,0 +1,45 @@
+---
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:{{ uptime_kuma_version }}
+    container_name: uptime-kuma
+    restart: unless-stopped
+    mem_limit: {{ ((observability_memory_limit_mb | int) * 0.50) | int }}m
+    cpus: {{ ((observability_cpu_quota_percent | int) * 0.0050) | round(2) }}
+    ports:
+      - "3001:3001"
+    volumes:
+      - /opt/bootstrap-observability/uptime-kuma:/app/data
+    environment:
+      UPTIME_KUMA_SQLITE_SINGLE_CONNECTION: "true"
+
+  beszel:
+    image: henrygd/beszel:{{ beszel_version }}
+    container_name: beszel
+    restart: unless-stopped
+    mem_limit: {{ ((observability_memory_limit_mb | int) * 0.25) | int }}m
+    cpus: {{ ((observability_cpu_quota_percent | int) * 0.0030) | round(2) }}
+    ports:
+      - "8090:8090"
+    volumes:
+      - /opt/bootstrap-observability/beszel:/beszel_data
+      - /opt/bootstrap-observability/beszel-socket:/beszel_socket
+
+  beszel-agent:
+    image: henrygd/beszel-agent:{{ beszel_version }}
+    container_name: beszel-agent
+    restart: unless-stopped
+    mem_limit: {{ ((observability_memory_limit_mb | int) * 0.1875) | int }}m
+    cpus: {{ ((observability_cpu_quota_percent | int) * 0.0020) | round(2) }}
+    network_mode: host
+    env_file:
+      - /opt/bootstrap-observability/beszel-agent.env
+    environment:
+      LISTEN: /beszel_socket/beszel.sock
+      HUB_URL: http://127.0.0.1:8090
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - /opt/bootstrap-observability/beszel-agent:/var/lib/beszel-agent
+      - /opt/bootstrap-observability/beszel-socket:/beszel_socket
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host:ro

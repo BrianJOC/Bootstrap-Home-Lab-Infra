@@ -64,8 +64,8 @@ resource "vault_jwt_auth_backend" "gitlab_jwt" {
   type        = "jwt"
   description = "JWT auth for GitLab CI pipeline secret injection"
 
-  jwks_url      = "https://gitlab.${var.internal_domain}/-/jwks"
-  bound_issuer  = "https://gitlab.${var.internal_domain}"
+  jwks_url     = "https://gitlab.${var.internal_domain}/-/jwks"
+  bound_issuer = "https://gitlab.${var.internal_domain}"
 
   tune {
     listing_visibility = "hidden"

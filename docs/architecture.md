@@ -26,10 +26,10 @@ bootstrap-home-infra/
 │   │   ├── stage1_dns.go            # Stage 1: Technitium DNS
 │   │   ├── stage2_tls.go            # Stage 2: Cloudflare DNS-01 cert issuance
 │   │   ├── stage3_vault.go          # Stage 3: Vault install, init, unseal, configure
-│   │   ├── stage4_authentik.go      # Stage 4: Authentik deploy and OIDC wiring
-│   │   ├── stage5_postgres.go       # Stage 5: PostgreSQL + Authentik migration
+│   │   ├── stage4_postgres.go       # Stage 4: PostgreSQL and service databases
+│   │   ├── stage5_authentik.go      # Stage 5: Authentik deploy and OIDC wiring
 │   │   ├── stage6_gitlab.go         # Stage 6: GitLab CE + Runner + Vault JWT
-│   │   ├── stage7_maas.go           # Stage 7: MAAS install and lab VLAN DHCP
+│   │   ├── stage7_maas.go           # Stage 7: MAAS install; optional DHCP cutover
 │   │   ├── stage8_k3s.go            # Stage 8: k3s cluster install and Terraform trigger
 │   │   └── migrate_state.go         # Terraform state migration to GitLab HTTP backend
 │   ├── ssh/
@@ -138,7 +138,7 @@ bootstrap-home-infra/
 │       │   │   ├── main.yml
 │       │   │   ├── install.yml      # MAAS snap or deb for target arch
 │       │   │   ├── init.yml         # maas init region+rack; DSN from env
-│       │   │   └── network.yml      # Fabric, subnet, DHCP config via maas CLI
+│       │   │   └── network.yml      # Host/interface readiness; no durable MAAS API objects
 │       │   ├── handlers/
 │       │   │   └── main.yml         # restart-maas
 │       │   └── defaults/
@@ -178,7 +178,7 @@ bootstrap-home-infra/
 │       │   ├── main.tf
 │       │   ├── variables.tf
 │       │   └── outputs.tf
-│       ├── maas-config/             # MAAS machines, subnets, DHCP config
+│       ├── maas-config/             # MAAS machines, networks, optional approved DHCP
 │       │   ├── main.tf
 │       │   ├── variables.tf
 │       │   └── outputs.tf
@@ -397,11 +397,23 @@ The logger in `internal/logging/logger.go` writes to two sinks: the log file and
 
 ### 3.2 `tls_lego`
 
-**Purpose:** Transfer lego binary for target arch; run DNS-01 challenge; collect cert and key to working directory.
+**Purpose:** Transfer lego binary for target arch; run DNS-01 challenge; collect cert and key to working directory; install the host-managed renewal timer and atomic deployment service.
 
 **Idempotency gate:** Check cert file existence and expiry (via `openssl x509 -noout -dates`) before running lego. Skip if valid cert present with > 30 days until expiry.
 
-**Secret injection:** `CF_DNS_API_TOKEN` passed as extra-var and used only in the lego invocation environment block. `ACME_SERVER_URL` and `CLOUDFLARE_API_BASE_URL` read from extra-vars, defaulting to production endpoints.
+**Secret injection:** During bootstrap, `CF_DNS_API_TOKEN` is passed as an
+extra-var and used only in the lego invocation environment block. For day-2
+renewal, the zone-scoped token is copied to a root-owned mode `0600` runtime
+file and read through lego's `_FILE` support. `ACME_SERVER_URL` and
+`CLOUDFLARE_API_BASE_URL` read from extra-vars, defaulting to production
+endpoints.
+
+**Renewal lifecycle:** A daily systemd timer checks the configurable renewal
+window. The oneshot service locks against concurrent runs, renews into immutable
+staging, validates the candidate, atomically changes the active symlink, reloads
+consumers sequentially, and rolls back if a health check fails. GitLab and Vault
+are not prerequisites; Vault synchronization may remain pending until unseal.
+See [certificate renewal and deployment](certificate-renewal.md).
 
 **Arch handling:** `lego_arch` var set from `ansible_architecture`; maps `x86_64` → `amd64`, `aarch64` → `arm64`. Binary downloaded from GitHub releases.
 
@@ -424,7 +436,9 @@ The logger in `internal/logging/logger.go` writes to two sinks: the log file and
 
 **Secret injection:** Admin password passed as extra-var `authentik_admin_password`; injected into the Docker Compose env block via the template. PostgreSQL DSN passed similarly. The compose template uses env var references, not inline values.
 
-**Bootstrap vs shared PostgreSQL:** The compose template has a conditional block: if `authentik_use_bundled_postgres` is true (default), bundled PostgreSQL is included in the compose file. The Go runner flips this to false during the Stage 5 migration and re-runs the role.
+**Database contract:** The compose template always receives the final PostgreSQL
+DSN created by Stage 4. It does not contain a bundled PostgreSQL service or a
+temporary-database conditional.
 
 ### 3.5 `postgresql_install`
 
@@ -447,11 +461,34 @@ The logger in `internal/logging/logger.go` writes to two sinks: the log file and
 
 ### 3.7 `maas_install`
 
-**Purpose:** Install MAAS via snap (preferred) or deb for target arch, run `maas init region+rack`, start MAAS services. Network configuration (fabric, subnet, DHCP) is done by the Go runner via the MAAS CLI/API after the service is healthy.
+**Purpose:** Install MAAS via snap (preferred) or deb for target arch, run
+`maas init region+rack`, start MAAS services, and validate host/interface
+readiness. Terraform owns durable fabric, VLAN, subnet, and range objects. Go
+orchestrates the optional, explicitly approved DHCP cutover after MAAS is healthy.
 
 **Idempotency gate:** Check `maas status` before install. Check `snap list maas` for existing installation.
 
 **Secret injection:** PostgreSQL DSN for MAAS passed as extra-var `maas_db_uri`; injected into `maas init` command environment block with `no_log: true` on the task.
+
+### 3.8 `observability_install`
+
+**Purpose:** Install target-local Uptime Kuma, Beszel hub/agent, and the
+bootstrap health adapter; generate functional monitors, bounded retention,
+resource limits, and optional paging configuration. TrueNAS is never a runtime
+target for this role.
+
+**Idempotency gate:** Verify pinned container versions, local state volumes,
+Beszel agent registration through a local Unix socket, generated monitor IDs,
+effective retention, paging test state, and cgroup limits before changing
+anything.
+
+**Secret injection:** Discord, Telegram, ntfy, or generic-webhook credentials
+are read from protected mode `0600` files. They never enter structural
+configuration, command arguments, logs, dashboards, or generated unit text.
+
+**Resource behavior:** Kuma and Beszel share the configured memory, CPU, and
+storage budget. Optional collectors and noncritical Kuma cadence shed first.
+Core services are never throttled to preserve telemetry.
 
 ---
 
@@ -463,9 +500,9 @@ The logger in `internal/logging/logger.go` writes to two sinks: the log file and
 |--------|-------------|---------|
 | `dns-records` | `technitium` (community) | Creates and manages A records in Technitium for a given service hostname. Input: `hostname`, `ip`. Called by the service deploy pipeline. |
 | `vault-config` | `hashicorp/vault` | Manages Vault policies, KV paths, auth method configuration, and PKI setup. Used during bootstrap and for post-bootstrap policy updates. |
-| `authentik-config` | `goauthentik/authentik` | Manages groups, OIDC providers, and applications. Called during bootstrap Stage 4 and by the service deploy pipeline when `authentik: true`. |
+| `authentik-config` | `goauthentik/authentik` | Manages groups, OIDC providers, and applications. Called during bootstrap Stage 5 and by the service deploy pipeline when `authentik: true`. |
 | `gitlab-config` | `gitlabhq/gitlab` | Manages GitLab groups, projects, Runner registration, and project-level CI/CD variables. Used during Stage 6. |
-| `maas-config` | `maas/maas` | Manages MAAS machine records, subnet definitions, and DHCP configuration. Used during Stage 7 and by the server adoption MR pipeline. |
+| `maas-config` | `canonical/maas` | Manages MAAS machine records, fabrics, VLANs, subnets, ranges, and the approved DHCP state. DHCP defaults disabled. Used during Stage 7 and by the server adoption MR pipeline. |
 | `k3s-cluster` | `hashicorp/kubernetes` | Registers a k3s cluster as a named Terraform target by writing kubeconfig and endpoint to Vault. Used during Stage 8. |
 | `helm-release` | `hashicorp/helm` | Deploys a Helm chart to a named k3s cluster using a kubeconfig sourced from Vault. Called by the service deploy pipeline for `target.cluster` services. |
 
@@ -563,19 +600,21 @@ Terraform module outputs that contain secrets (tokens, passwords, kubeconfigs) a
 
 **Trade-offs:** Two files to manage instead of one. The operator must ensure `.env` is populated before headless runs. `.env` files have no schema validation unless the binary enforces it explicitly.
 
-**Consequences:** The Go binary must validate `.env` presence and completeness at startup. The `.gitignore` must exclude `.env` and `config.yaml` (both are excluded; only `config.yaml.example` and `.env.example` are committed). Every Ansible role and Terraform module invocation must receive secrets via environment variable injection, not through files written to disk.
+**Consequences:** The Go binary must validate `.env` presence and completeness at startup. The `.gitignore` must exclude `.env` and runtime config according to the documented repository policy. Bootstrap inputs are passed to Ansible without appearing in process arguments or logs. ADR-009 permits minimum root-owned runtime copies for core host services; this ADR does not require Vault-exclusive runtime delivery.
 
 ---
 
 ### ADR-003: Ansible for initial deployment + Terraform for GitOps
 
-**Decision:** Service installation during bootstrap uses Ansible roles (imperative, SSH-based). Post-bootstrap service management uses Terraform (declarative, GitOps-driven via GitLab CI).
+**Status:** Amended 2026-07-26. The complete ownership matrix is in [`docs/resource-ownership.md`](resource-ownership.md).
 
-**Rationale:** Ansible excels at one-time system configuration tasks: installing packages, writing config files, managing systemd units. These tasks are appropriate during bootstrap where the target is a bare OS and Terraform's state management would be premature overhead. Terraform excels at declarative lifecycle management of services and infrastructure resources, which matches the post-bootstrap GitOps model. Trying to use Terraform from the start hits the chicken-and-egg problem: Terraform needs a state backend; the state backend (GitLab) is not yet running.
+**Decision:** Ownership is based on resource type, not bootstrap phase. Ansible owns host/runtime lifecycle both before and after handoff. Terraform owns durable service API objects from the moment each API is available. Go orchestrates both tools and the state handoff; it does not duplicate their lifecycle logic.
 
-**Trade-offs:** Two tool paradigms to maintain. Ansible roles and Terraform modules can drift in their understanding of what constitutes the deployed state of a service. Operators need familiarity with both.
+**Rationale:** Ansible excels at packages, files, systemd, Docker, migrations, and imperative operations. Terraform excels at declarative API resources with stable identity. Giving an object to one owner from creation avoids import-heavy handoffs, 409 conflicts, and configuration drift.
 
-**Consequences:** The handoff boundary is explicit: Ansible owns installation; Terraform owns post-bootstrap lifecycle. After bootstrap completes and state is migrated, Ansible is only invoked by GitLab CI pipelines (for bare metal provisioning post-MAAS commissioning), never directly by the operator.
+**Trade-offs:** Both tools remain part of the day-2 platform. Pipelines that require both must have explicit ordering and postcondition checks. Existing Ansible API-configuration tasks and Terraform `remote-exec` installation logic must be refactored to match the exclusive ownership matrix.
+
+**Consequences:** After bootstrap, GitLab pipelines invoke both Terraform and Ansible according to ownership. Operators do not routinely run either tool directly. A clean bootstrap has no Terraform import step because Terraform creates and tracks all Terraform-owned objects from their first creation.
 
 ---
 
@@ -591,15 +630,33 @@ Terraform module outputs that contain secrets (tokens, passwords, kubeconfigs) a
 
 ---
 
-### ADR-005: Authentik bundled PostgreSQL during bootstrap, migrated in Stage 5
+### ADR-005: PostgreSQL precedes Authentik; no bootstrap database migration
 
-**Decision:** Authentik starts in Stage 4 using its bundled PostgreSQL container. At the end of Stage 5, after the shared PostgreSQL instance is running, Authentik is migrated (stop → pg_dump → restore → restart) to the shared instance.
+**Status:** Amended 2026-07-26. This replaces the earlier bundled-PostgreSQL
+migration design. The complete contract is in
+[`docs/database-architecture.md`](database-architecture.md).
 
-**Rationale:** Stage 4 (Authentik) must precede Stage 5 (PostgreSQL) because the strict dependency order is: DNS → TLS → Vault → Authentik → PostgreSQL → GitLab. Authentik must be running before GitLab because GitLab needs Authentik OIDC credentials. PostgreSQL must come after Authentik because MAAS and GitLab both depend on it, and managing the shared instance as a service requires Authentik SSO to already work. Breaking this circular dependency requires Authentik to bootstrap on a temporary storage (its bundled PostgreSQL) and migrate later.
+**Decision:** PostgreSQL is Stage 4. It creates isolated databases and roles for
+Authentik, GitLab, and MAAS and records their credentials in Vault. Authentik is
+Stage 5 and connects to its final PostgreSQL database on first startup. The
+bootstrap path does not create a bundled Authentik database or migrate data.
 
-**Trade-offs:** The migration adds complexity: a stop-export-import-restart sequence with rollback handling. If the migration fails mid-import, the bootstrap runner must revert Authentik to the bundled DSN. This is the most operationally delicate step in the bootstrap sequence.
+**Rationale:** PostgreSQL has no dependency on Authentik, while Authentik requires
+PostgreSQL. Vault is already available to hold generated database credentials.
+Putting the database first expresses the real dependency and removes a
+stop-export-import-reconfigure-restart operation from a fresh installation.
 
-**Consequences:** The `authentik_install` Ansible role must support both `authentik_use_bundled_postgres: true` (Stage 4 default) and `authentik_use_bundled_postgres: false` (Stage 5 migration). The Go Stage 5 runner must implement the pg_dump → pg_restore sequence with rollback on failure. The migration is idempotent: if Authentik's config already points to the shared DSN, the step is skipped.
+**Trade-offs:** Shared PostgreSQL becomes an explicit Authentik prerequisite and
+a common host-level dependency. Each service still has an isolated database,
+role, credential, and restore target. A permanently separate Authentik database
+server would improve fault isolation but is not justified for the initial
+single-host homelab.
+
+**Consequences:** The `authentik_install` compose template always requires the
+final DSN and contains no bundled PostgreSQL branch. The Stage 4 runner owns
+database and role readiness; the Stage 5 runner owns Authentik initialization
+and application health. Brownfield Authentik imports are a separate, explicit
+future workflow and are never inferred during clean bootstrap.
 
 ---
 
@@ -617,13 +674,15 @@ Terraform module outputs that contain secrets (tokens, passwords, kubeconfigs) a
 
 ### ADR-007: Local Terraform state during bootstrap → GitLab HTTP backend post-bootstrap
 
-**Decision:** Terraform state is managed locally (local backend in `terraform/environments/bootstrap/`) during bootstrap. After all stages complete, `terraform init -migrate-state` migrates each workspace to the GitLab HTTP backend. Local `.tfstate` files are deleted only after the GitLab backend confirms the state is readable. This migration is the SC-14 completion condition.
+**Status:** Amended 2026-07-26. Approval and migration behavior is defined in [`docs/resource-ownership.md`](resource-ownership.md).
+
+**Decision:** Stage-aligned Terraform roots use local backends during bootstrap. After all stages complete, `terraform init -migrate-state` migrates each state to a distinct GitLab HTTP state name. Local `.tfstate` files are deleted only after GitLab returns a state with matching lineage and serial and the operator confirms the handoff. This migration is the SC-14 completion condition.
 
 **Rationale:** The GitLab HTTP backend cannot exist before GitLab is running. Running Terraform with a local backend during bootstrap avoids the circular dependency. The migration procedure is a well-defined `terraform init -migrate-state` operation with explicit verification and non-destructive rollback (local file not deleted until confirmed).
 
 **Trade-offs:** Local `.tfstate` files on the operator's machine are a temporary source of truth. If the operator's machine is lost between bootstrap completion and state migration, those state files are lost. Mitigated by: (1) bootstrap completes quickly (single session), (2) migration runs immediately after final stage, (3) local files are in the working directory that the operator chose.
 
-**Consequences:** `terraform/environments/bootstrap/` must be in `.gitignore` for the `*.tfstate` and `*.tfstate.backup` entries, but the `*.tf` files are committed. The migration runner must handle multiple workspaces independently: a failure in one must not prevent migration of others. The Terraform project access token used for the HTTP backend is stored in Vault and injected as `TF_VAR_gitlab_terraform_token` at migration time.
+**Consequences:** `terraform/environments/bootstrap/` contains separate roots for DNS, Vault, Authentik, GitLab, and MAAS. The migration runner handles each independently: a failure in one must not delete or invalidate any local fallback. Interactive runs display and require approval of saved plans. Headless mutating applies require the explicit `--approve-terraform` flag. The backend credential is stored in Vault and supplied through the HTTP backend environment variables, never written into `backend.tf`.
 
 ---
 
@@ -636,6 +695,317 @@ Terraform module outputs that contain secrets (tokens, passwords, kubeconfigs) a
 **Trade-offs:** Two files per node to maintain: the node definition and whatever the provisioner needs. The indirection through node names requires that node names are stable identifiers used consistently across the cluster definition, the node definition, and the Ansible dynamic inventory.
 
 **Consequences:** Stage 8 resolves node names to IPs by reading node definitions and querying the appropriate provisioner API (MAAS API for MAAS nodes, Proxmox API for Proxmox nodes) at runtime. If a node is not SSH-reachable regardless of provisioner state, Stage 8 warns and skips that node without failing the stage. The Terraform `k3s-cluster` module does not import provisioner-specific resources; it only registers the cluster endpoint and kubeconfig.
+
+---
+
+### ADR-009: Pragmatic v1 secret delivery with manual Vault recovery
+
+**Status:** Accepted 2026-07-26.
+
+**Context:** The product targets one administrator using one trusted laptop to bootstrap an initial homelab. Requiring every core service to fetch its secrets from Vault at startup would make a sealed Vault part of the critical boot path. Adding SPIFFE/SPIRE would introduce a second trust plane before the platform has a multi-node workload-identity requirement.
+
+**Decision:** Vault is the authoritative record for platform secrets, but v1 core host services may retain the minimum local runtime copies required to start and recover. Those copies must be root-owned, mode `0600`, excluded from logs and version control, and reconciled from the authoritative value. Manual Shamir unseal remains the v1 default. The operator selects a `vault-init.json` path outside the repository and is instructed to back it up, typically in a password manager. `.env` and `~/.bootstrap` are preserved by default for safe re-runs; removal is only through an explicit cleanup flow that never deletes `vault-init.json`.
+
+**Delivery tiers:**
+
+1. Bootstrap and core host services use protected local runtime copies where necessary.
+2. Vault Agent is an optional post-v1 enhancement for selected host services. If used, templates should render into `/run` or another ephemeral location and service ordering must account for a sealed Vault.
+3. Future k3s workloads should prefer Kubernetes authentication with Vault Agent Injector and ephemeral pod-local secret rendering.
+4. SPIFFE/SPIRE is deferred until multiple nodes/clusters, workload mTLS, or cross-platform workload identity makes another identity plane worthwhile.
+
+**Consequences:** Documentation must not claim that secret bytes exist only in Vault or never appear in protected runtime files. Root compromise of the host can expose service runtime credentials; this is accepted for the single-host v1 threat model. Rotation must update Vault first, reconcile required local copies atomically, and restart or reload affected services. Automatic unseal remains a future optional profile, not a v1 dependency.
+
+---
+
+### ADR-010: Trust on first use with pinned SSH host identity
+
+**Status:** Accepted 2026-07-26. The complete interaction contract is in [`docs/ssh-host-trust.md`](ssh-host-trust.md).
+
+**Decision:** Interactive bootstrap displays and confirms an unknown SSH host fingerprint, then pins it in a bootstrap-owned known-hosts file shared by Go and Ansible. A changed key stops before authentication, displays old and new fingerprints, and offers an in-workflow replacement only after the operator confirms an intentional reinstall/replacement by typing the target. Headless mode cannot silently replace a pin; replacement requires an explicit flag plus the expected new fingerprint.
+
+**Rationale:** A new homelab server often has no existing trust entry, so strict pre-provisioning alone is poor onboarding. Permanently disabling verification exposes bootstrap credentials to impersonation. Trust on first use with visible fingerprints, durable pinning, and a deliberate changed-key path balances usability and identity continuity.
+
+**Consequences:** Go and Ansible must use the same strict trust store. Production configuration may not set `host_key_checking = False`. Reinstall recovery is handled inside the TUI and is auditable. First-use confirmation without an independently verified fingerprint remains susceptible to an active attacker on that first connection; advanced and headless users can supply `ssh_host_fingerprint` to remove that ambiguity.
+
+---
+
+### ADR-011: Homelab-first DNS and explicit MAAS DHCP cutover
+
+**Status:** Accepted 2026-07-26. The complete contract is in
+[`docs/network-cutover.md`](network-cutover.md), with the operator procedure in
+[`docs/unifi-network-guide.md`](unifi-network-guide.md).
+
+**Decision:** Stage 1 installs and validates Technitium without modifying router
+or non-lab client settings. The desired post-bootstrap state is Technitium as the
+DNS resolver for selected networks across the home, rolled out manually through
+UniFi one network at a time. Stage 7 installs MAAS with DHCP disabled by default.
+MAAS DHCP may be enabled only for a dedicated lab VLAN after explicit approval,
+network validation, a bounded conflicting-DHCP probe, and confirmation that
+UniFi DHCP was disabled on that VLAN.
+
+**Rationale:** DNS and DHCP changes enlarge the failure domain beyond the
+bootstrap server. Keeping the default installation lab-scoped lets a new
+operator prove Technitium and preserve a working household network. A separate
+UniFi procedure still leads to the requested whole-home DNS end state. Making
+MAAS DHCP opt-in prevents two DHCP authorities from silently coexisting.
+
+**Consequences:** Configuration must collect the interface, VLAN, subnet,
+gateway, and optional MAAS range. Bootstrap never calls the UniFi API in v1.
+Failed target-resolver changes restore the captured prior resolver
+configuration. A failed MAAS activation disables partial MAAS DHCP and directs
+the operator to restore UniFi DHCP. One Technitium server is an accepted v1
+availability risk; a resilient deployment advertises two internal resolvers
+rather than mixing Technitium with a public client-side secondary.
+
+---
+
+### ADR-012: Restic backup repositories on TrueNAS and removable USB
+
+**Status:** Accepted 2026-07-27. The policy is defined in
+[`docs/backup-recovery.md`](backup-recovery.md), with storage preparation in
+[`docs/truenas-backup-guide.md`](truenas-backup-guide.md).
+
+**Decision:** Restic is the default backup engine. The primary repository is a
+dedicated TrueNAS dataset, mounted over NFS by default. A separate removable USB
+repository is optional and normally disconnected. The wizard recommends nightly
+backups at 02:30 with 7 daily, 5 weekly, and 12 monthly snapshots, weekly
+metadata checks, monthly full-data checks, and quarterly restore drills. It
+displays these defaults and permits backup disablement or custom schedules,
+retention, verification, and USB-copy intervals.
+
+**Rationale:** The selected topology needs backups that remain usable when
+GitLab or the bootstrap controller is unavailable. Restic provides encrypted,
+deduplicated snapshots and repository verification without another server-side
+control plane. TrueNAS supplies reliable local storage and optional dataset
+snapshots. The disconnected USB repository reduces the shared failure domain of
+the host and online NAS.
+
+**Trade-offs:** Restic is CLI-oriented and does not create application-consistent
+database or service snapshots itself. Native Vault, PostgreSQL, GitLab,
+Authentik, Technitium, MAAS, and k3s artifacts must be produced before Restic
+runs. An online NFS repository remains writable by the backup host, so TrueNAS
+snapshots and offline USB are defense layers rather than immutability guarantees.
+
+**Consequences:** Backup jobs are Ansible-owned host lifecycle with Go-owned
+validation, status, and operator prompts. Repository passwords follow ADR-009:
+password-manager backup plus the minimum root-owned runtime copy required for
+unattended timers. A missing NAS mount or mismatched repository ID stops backup,
+retention, and restore operations. USB absence is reported as copy age, not as a
+failure of the primary NAS backup.
+
+---
+
+### ADR-013: Supported trial mode and pre-unseal service recovery
+
+**Status:** Accepted 2026-07-28. Backup trial behavior is defined in
+[`docs/backup-recovery.md`](backup-recovery.md); boot ordering and reconciliation
+are defined in [`docs/reboot-recovery.md`](reboot-recovery.md).
+
+**Decision:** `backup_enabled: false` is a supported trial profile requiring no
+repository, password, mount, timer, or USB device. It does not block bootstrap,
+but status and destructive actions remain visibly unprotected until backups are
+configured. On host reboot, core services start from minimum protected local
+runtime credentials while Vault starts sealed. Manual unseal triggers
+Vault/OIDC/GitLab/runtime-secret/backup reconciliation.
+
+**Rationale:** A first-time evaluator should not need to own a NAS or removable
+device merely to understand the platform. Silently placing copies on the same
+host would create false confidence. Separately, making household DNS and every
+web service wait for manual unseal would turn ordinary reboots into broad
+outages despite the accepted protected-runtime-copy model.
+
+**Trade-offs:** Trial mode has no protection from host or disk loss. Before
+unseal, Vault-dependent CI, new secret delivery, rotation, and fresh Raft
+snapshots are unavailable. Protected runtime copies expand the impact of root
+host compromise, already accepted in ADR-009.
+
+**Consequences:** Completion and status views distinguish trial/unprotected,
+degraded/sealed, partial backup, and healthy states. The operator may enable
+backups later without reinstalling services. Unseal shares are entered through
+masked prompts and never supplied as CLI arguments or retained. Post-unseal
+reconciliation refreshes stale runtime copies only through an explicit,
+auditable change path.
+
+---
+
+### ADR-014: Host-managed automatic certificate renewal
+
+**Status:** Accepted 2026-07-28. The complete lifecycle contract is defined in
+[`docs/certificate-renewal.md`](certificate-renewal.md).
+
+**Decision:** A systemd timer on the bootstrap host checks certificate
+eligibility daily and renews through lego and Cloudflare DNS-01 within a
+configurable window, defaulting to 30 days. A Cloudflare API token scoped to the
+managed zone with Zone Read and DNS Edit is retained as a root-owned mode `0600`
+runtime secret. Candidates are validated in staging, activated atomically, and
+rolled back if a sequential consumer reload or health check fails. Renewal
+continues while GitLab is unavailable or Vault is sealed; Vault synchronization
+may be completed during post-unseal reconciliation.
+
+**Rationale:** Certificate expiry is a host availability concern and should not
+depend on the availability of the GitOps or secret-control planes it protects.
+The accepted local-runtime-secret model already permits a narrowly scoped token,
+and Cloudflare token scoping limits the credential to the required zone
+operations.
+
+**Trade-offs:** Root compromise can expose a token capable of editing records in
+the certificate zone. Automatic issuance can encounter ACME rate limits or
+activate material that individual consumers reject, so locking, validation,
+staged activation, per-consumer health checks, and rollback are mandatory.
+
+**Consequences:** Ansible owns timer, service, token file, immutable certificate
+versions, and consumer reload integration. Go owns configuration, status,
+manual interaction, and reconciliation orchestration. Vault remains
+authoritative for certificate inventory and distribution but is not in the
+renewal critical path. Disabling automation preserves expiry monitoring and a
+persistent warning.
+
+---
+
+### ADR-015: Deadline-driven application maintenance
+
+**Status:** Accepted 2026-07-28. The complete policy is defined in
+[`docs/upgrade-policy.md`](upgrade-policy.md).
+
+**Decision:** Ubuntu security packages install automatically without automatic
+reboot. Renovate proposes pinned application versions for GitLab review.
+Unreviewed proposals become `approved-by-policy` after configurable defaults of
+3 days for critical security, 7 days for other security, 21 days for patch or
+minor updates, and 30 days for major updates. Eligible proposals execute one
+component at a time in a configurable maintenance window, defaulting to Sunday
+at 03:00 local time with a three-hour admission window. Deadline expiry never
+bypasses compatibility, health, capacity, backup, migration, or rollback gates.
+
+**Rationale:** A single administrator should normally control disruptive
+updates but should not accumulate indefinite security and compatibility drift
+while unavailable. Separating policy approval from execution gates gives
+ordinary changes a review period without turning absence into permanent
+stagnation.
+
+**Trade-offs:** An unattended but fully gated upgrade can still cause downtime,
+and single-node GitLab cannot be upgraded without an outage. Conservative gates
+can also leave an update overdue indefinitely when recovery protection is
+missing. Major and data-bearing upgrades require stronger evidence than
+stateless immutable rollouts.
+
+**Consequences:** GitLab is the proposal and audit plane; a host-side oneshot
+executor completes a started GitLab upgrade independently of GitLab remaining
+available. GitLab required stops and migrations and K3s version sequencing are
+component-specific hard gates. Trial mode permits only stateless patch/minor
+upgrades with proven immutable rollback. Status distinguishes awaiting review,
+policy-approved, blocked, overdue, running, rolled back, failed, and
+reboot-required states.
+
+---
+
+### ADR-016: Target-local constrained observability
+
+**Status:** Accepted 2026-07-28. The complete monitoring and paging contract is
+defined in [`docs/observability.md`](observability.md).
+
+**Decision:** Uptime Kuma, Beszel hub/agent, and the bootstrap health adapter
+run on the target server. Kuma owns synthetic checks, incidents, and optional
+paging; Beszel owns lightweight high-level system and container metrics with
+aggressive aggregation. Kuma and journald retain seven days. The combined
+default budget is 512 MiB memory, half of one CPU, and 5 GiB state. Paging via
+Discord, Telegram, ntfy, or generic webhook is configurable and may be disabled
+without disabling dashboards. TrueNAS performs storage only and runs no
+telemetry compute.
+
+**Rationale:** The homelab needs actionable failure signals and basic trend
+context, but a Prometheus/Grafana/Loki stack is disproportionate for a
+constrained single host. Kuma and Beszel cover functional availability and
+high-level resources with a smaller operational and compute footprint.
+
+**Trade-offs:** Target-local paging cannot report total host, power, or outbound
+network loss. Beszel's built-in aggregation is more aggressive than retaining
+one-minute samples for several days. Optional collectors and noncritical check
+cadence must shed before telemetry can contend with core services.
+
+**Consequences:** Ansible owns local containers, agent socket, state,
+retention, cgroup limits, health adapter, and protected paging credentials. Go
+owns wizard configuration, notification tests, monitor generation, status, and
+resource-budget validation. Terraform/service definitions provide declarative
+health-check intent. Status explicitly distinguishes monitoring disabled,
+paging disabled, local-outage blind spot, resource-degraded telemetry, and
+healthy monitoring.
+
+---
+
+### ADR-017: Layered GitLab and Terraform-state disaster recovery
+
+**Status:** Accepted 2026-07-28. The complete contract is defined in
+[`docs/gitlab-disaster-recovery.md`](gitlab-disaster-recovery.md).
+
+**Decision:** A nightly full GitLab set protects ordinary instance data with a
+less-than-24-hour target. Every successful infrastructure apply also produces
+an encrypted Restic checkpoint of critical Git bundles and decrypted Terraform
+state, bound to the applied commit, workspace, lineage, and serial. GitLab loss
+freezes all IaC mutation. A host-side recovery operation restores the exact
+GitLab version, configuration, secrets, identity, isolated database, and
+application data; reconciles only a compatible newer checkpoint; verifies the
+control plane; and requires explicit unfreeze. Local Terraform is a named,
+audited break-glass path only.
+
+**Rationale:** GitLab is both the GitOps source and Terraform backend. Its state
+files require the GitLab database and encryption keys, so a GitLab-only backup
+creates a recovery dependency precisely when GitLab is unavailable. A decrypted
+post-apply export stored immediately inside encrypted Restic breaks that cycle
+without establishing a second routine backend.
+
+**Trade-offs:** Decrypted state briefly exists in protected tmpfs and contains
+sensitive values. Checkpoint creation adds work after applies and can report a
+recovery gap even when live infrastructure is healthy. Reconciling a newer
+checkpoint than the full backup requires strict commit, lineage, and serial
+matching rather than a simple newest-file restore.
+
+**Consequences:** Ansible owns exact-version installation, runtime recovery,
+freeze integration, and GitLab health. Go owns incident interaction, backup
+selection, reconciliation validation, verification, and explicit unfreeze.
+GitLab pipelines request post-apply checkpoints, but a host-side executor owns
+their creation and GitLab's own restoration. Backups include the verified
+package artifact, configuration, secrets, identity, isolated database, native
+archive, and critical checkpoint metadata.
+
+---
+
+### ADR-018: Portable controller recovery with explicit adoption
+
+**Status:** Accepted 2026-07-28. The complete contract is defined in
+[`docs/controller-recovery.md`](controller-recovery.md).
+
+**Decision:** A blank replacement administrator laptop reconstructs control
+from the password manager, a verified TrueNAS or USB Restic repository, target
+access, and a verified bootstrap release. A portable bundle preserves sanitized
+configuration, pinned target identity, backend/ownership metadata, manifests,
+and an exact verified bootstrap artifact. The current controller SSH private
+key is included by default inside an encryption envelope separate from Restic;
+its password remains only in the password manager. Vault init and Shamir
+material are excluded. Recovery verifies identity and performs a read-only
+audit before explicit adoption. Normal recovery preserves prior credentials;
+an explicit lost-or-compromised mode replaces the SSH key and rotates
+controller-specific tokens.
+
+**Rationale:** The single administrator laptop is operationally important but
+must not become an irreplaceable or authoritative control-plane component. A
+portable recovery map removes laptop-specific paths and local-history
+dependencies while retaining strict target identity. Separate SSH-key
+encryption prevents a target compromise plus its unattended Restic credential
+from yielding controller access.
+
+**Trade-offs:** The password manager and Restic repository remain joint
+recovery dependencies, and an operator who loses both needs physical console
+re-enrollment. Preserving the old key favors ordinary hardware recovery over
+automatic revocation. Compromise recovery therefore requires an explicit mode
+and may include service-specific manual token rotation.
+
+**Consequences:** Go owns bundle creation, integrity/schema validation, local
+path rebinding, read-only audit, adoption, and the rotation checklist. The
+target stores only an opaque encrypted artifact plus a non-secret controller
+marker. Ansible may manage target-side marker directories and backup hooks but
+does not own controller credentials. Every material change refreshes the
+bundle; nightly backup includes the newest sealed artifact. Trial mode offers a
+verified external export but remains visibly unprotected until one exists.
 
 ---
 
@@ -709,22 +1079,48 @@ type Config struct {
     TargetHost          string `yaml:"target_host"`           // IP or hostname of target Ubuntu server
     SSHUser             string `yaml:"ssh_user"`              // Default: "ubuntu"
     SSHKeyPath          string `yaml:"ssh_key_path"`          // Path to private key on operator machine
+    SSHHostFingerprint  string `yaml:"ssh_host_fingerprint"`  // Optional expected SHA-256 host key fingerprint
     InternalDomain      string `yaml:"internal_domain"`       // e.g. "home.example.com"
     CloudflareZoneID    string `yaml:"cloudflare_zone_id"`    // Cloudflare zone ID for internal domain
     BootstrapServerIP   string `yaml:"bootstrap_server_ip"`   // Static IP of the bootstrap server
     LabVLANSubnet       string `yaml:"lab_vlan_subnet"`       // CIDR, e.g. "10.10.10.0/24"
-    LabVLANID           int    `yaml:"lab_vlan_id"`           // VLAN ID on Unifi
+    LabGateway          string `yaml:"lab_gateway"`           // Gateway address inside the lab subnet
+    LabVLANID           int    `yaml:"lab_vlan_id"`           // VLAN ID on UniFi
+    LabVLANInterface    string `yaml:"lab_vlan_interface"`    // Required for MAAS DHCP
+    DHCPRangeLow        string `yaml:"dhcp_range_low"`        // Optional MAAS dynamic range start
+    DHCPRangeHigh       string `yaml:"dhcp_range_high"`       // Optional MAAS dynamic range end
+    MAASDHCPEnabled     bool   `yaml:"maas_dhcp_enabled"`     // Default false; deliberate cutover
+    BackupEnabled       bool   `yaml:"backup_enabled"`        // Default false until repository supplied
+    BackupRepository    string `yaml:"backup_repository"`     // Restic path or URI
+    BackupOnCalendar    string `yaml:"backup_on_calendar"`    // Default daily 02:30
+    BackupKeepDaily     int    `yaml:"backup_keep_daily"`     // Default 7
+    BackupKeepWeekly    int    `yaml:"backup_keep_weekly"`    // Default 5
+    BackupKeepMonthly   int    `yaml:"backup_keep_monthly"`   // Default 12
+    BackupMetadataCheck string `yaml:"backup_metadata_check_interval"` // Default weekly
+    BackupFullCheck     string `yaml:"backup_full_check_interval"`     // Default monthly
+    BackupUSBEnabled    bool   `yaml:"backup_usb_enabled"`    // Optional offline copy
+    BackupUSBRepository string `yaml:"backup_usb_repository"` // Removable Restic repo
+    BackupUSBCopy       string `yaml:"backup_usb_copy_interval"` // Manual/weekly/monthly
+    BackupRestoreDrill  string `yaml:"backup_restore_drill_interval"` // Default quarterly
+    ControllerRecoveryEnabled bool `yaml:"controller_recovery_enabled"` // Default true
+    ControllerRecoveryRefresh bool `yaml:"controller_recovery_refresh_after_change"` // Default true
+    ControllerRecoveryIncludeSSHKey bool `yaml:"controller_recovery_include_ssh_private_key"` // Default true
     AdminEmail          string `yaml:"admin_email"`           // Admin email for all services
+    VaultInitOutputPath string `yaml:"vault_init_output_path"`// Recovery material path outside repo
     VaultShares         int    `yaml:"vault_shares"`          // Shamir share count; default 5
     VaultThreshold      int    `yaml:"vault_threshold"`       // Unseal threshold; default 3
 }
 
 // Secrets holds all sensitive values sourced from the process environment (loaded from .env).
-// Fields are populated by reading env vars; values are never written to disk or logs.
+// Fields are populated by reading the protected .env input; values are never
+// written to structural config, process arguments, or logs.
 // The zero value of any field means "not set"; all fields are required unless noted.
 type Secrets struct {
     CFDNSAPIToken       string // CF_DNS_API_TOKEN — Cloudflare API token for DNS-01
     AdminPassword       string // BOOTSTRAP_ADMIN_PASSWORD — master admin password
+    ResticPrimaryPassword string // RESTIC_PRIMARY_PASSWORD — optional primary repository key
+    ResticUSBPassword     string // RESTIC_USB_PASSWORD — optional removable repository key
+    ControllerRecoveryPassword string // CONTROLLER_RECOVERY_PASSWORD — separate SSH-key envelope key
 }
 ```
 
@@ -752,7 +1148,7 @@ target:
 authentik: bool           # required; true = OIDC proxy; false = direct access
 allowed_groups:           # required; list of Authentik group names
   - string
-health_check: string      # required; format: "http", "https", "tcp:<port>"; hook for future monitoring
+health_check: string      # required; format: "http", "https", "tcp:<port>"; materialized as a Kuma monitor in v1
 ```
 
 ### 6.4 Node Definition Schema
@@ -797,26 +1193,33 @@ nodes:                    # required; list must have at least one control-plane 
 Operator machine                Target host            Vault
                                                        (after Stage 3)
 .env (CF_DNS_API_TOKEN)
-  → process env only
+  → mode 0600; preserved by default for safe re-runs
   → Go runner reads env var
   → passes as extra-var to Ansible
-  → Ansible uses in task env: block     (never written to disk on target)
+  → never written to logs or process arguments
 
 Generated secrets (passwords, tokens):
   → Go runner generates in memory
   → writes to Vault KV via HTTPS
-  → Ansible reads from Vault via env var injection (Go runner fetches, passes as extra-var)
+  → Vault is the authoritative record
+  → core host services may receive a minimum root-owned mode 0600 runtime copy
+  → rotation reconciles local copies atomically, then reloads/restarts services
 
 vault-init.json:
-  → written to operator's working dir on first Vault init
+  → written to an operator-selected path outside the repository
   → contains all Shamir unseal keys and root token
-  → operator's responsibility to secure offline
-  → never committed to git (in .gitignore)
+  → TUI recommends backup in a password manager or other secure location
+  → preserved permanently; cleanup must never delete it
 
 Bootstrap Vault token:
   → generated in Stage 3; held in RunContext struct in Go process memory
   → never written to disk, log file, or TUI
   → TTL: 24h; warn if > 23h elapsed since Stage 3 start
+
+Future delivery:
+  → selected host services may use Vault Agent templates rendered under /run
+  → k3s workloads prefer Kubernetes auth + Vault Agent Injector
+  → SPIFFE/SPIRE deferred until multi-node workload identity or mTLS is required
 ```
 
 ### 7.2 Architecture Neutrality
@@ -939,8 +1342,8 @@ Stage 0 (Config)
     └── Stage 1 (DNS)
             └── Stage 2 (TLS)
                     └── Stage 3 (Vault)  ←── vault-init.json written here
-                            ├── Stage 4 (Authentik)  ←── uses bundled postgres
-                            │       └── Stage 5 (PostgreSQL)  ←── migrates Authentik here
+                            ├── Stage 4 (PostgreSQL)  ←── final service databases
+                            │       └── Stage 5 (Authentik)  ←── starts on final DB
                             │               └── Stage 6 (GitLab + Runner)
                             │                       └── Stage 7 (MAAS)
                             │                               └── Stage 8 (k3s)

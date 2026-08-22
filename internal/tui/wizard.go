@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net"
 	"os"
@@ -83,12 +84,24 @@ func newWizardModel(mode InitialMode, rc *config.RunConfig, resultCh chan config
 		{key: "bootstrap_server_ip", label: "Bootstrap server IP",
 			description: "IP address of this machine (used in Ansible inventory).",
 			example:     "192.168.1.100", validate: validateIP},
+		{key: "ssh_host_fingerprint", label: "Expected SSH host fingerprint",
+			description: "Optional SHA-256 fingerprint for out-of-band identity verification. Leave empty for interactive first-use confirmation.",
+			example:     "SHA256:base64-fingerprint", validate: validateOptionalSSHFingerprint},
+		{key: "lab_gateway", label: "Lab gateway",
+			description: "Gateway IP inside the lab subnet. The first usable address is pre-filled.",
+			example:     "10.0.0.1", validate: validateIP},
+		{key: "vault_init_output_path", label: "Vault recovery output path",
+			description: "Absolute controller path outside this repository for Vault init JSON.",
+			example:     "~/.local/share/bootstrap-home-infra/recovery/vault-init.json", validate: validateAbsolutePath},
 		{key: "CF_DNS_API_TOKEN", label: "Cloudflare API token",
 			description: "DNS-01 challenge token (needs Zone:DNS:Edit permission).",
-			isSecret: true, validate: validateNonEmpty},
+			isSecret:    true, validate: validateNonEmpty},
+		{key: "CONTROLLER_RECOVERY_PASSWORD", label: "Controller recovery password",
+			description: "Separate password-manager secret used to encrypt the portable SSH-key envelope.",
+			isSecret:    true, validate: validateNonEmpty},
 		{key: "BOOTSTRAP_ADMIN_PASSWORD", label: "Admin password",
 			description: "Password for the bootstrapped admin account.",
-			isSecret: true, validate: validateNonEmpty},
+			isSecret:    true, validate: validateNonEmpty},
 	}
 
 	m := &wizardModel{
@@ -111,6 +124,9 @@ func newWizardModel(mode InitialMode, rc *config.RunConfig, resultCh chan config
 	if detectedKey != "" && m.values["ssh_key_path"] == "" {
 		m.values["ssh_key_path"] = detectedKey
 	}
+	if m.values["vault_init_output_path"] == "" {
+		m.values["vault_init_output_path"] = config.DefaultConfig().VaultInitOutputPath
+	}
 
 	m.applyFieldToInput()
 	return m
@@ -125,17 +141,23 @@ func prefillWizard(m *wizardModel, rc *config.RunConfig) {
 	set("target_host", rc.TargetHost)
 	set("ssh_user", rc.SSHUser)
 	set("ssh_key_path", rc.SSHKeyPath)
+	set("ssh_host_fingerprint", rc.SSHHostFingerprint)
 	set("internal_domain", rc.InternalDomain)
 	set("cloudflare_zone_id", rc.CloudflareZoneID)
 	set("bootstrap_server_ip", rc.BootstrapServerIP)
 	set("lab_vlan_subnet", rc.LabVLANSubnet)
+	set("lab_gateway", rc.LabGateway)
 	set("admin_email", rc.AdminEmail)
+	set("vault_init_output_path", rc.VaultInitOutputPath)
 	if rc.Secrets != nil {
 		if rc.Secrets.CloudflareAPIToken != "" {
 			m.secrets["CF_DNS_API_TOKEN"] = rc.Secrets.CloudflareAPIToken
 		}
 		if rc.Secrets.AdminPassword != "" {
 			m.secrets["BOOTSTRAP_ADMIN_PASSWORD"] = rc.Secrets.AdminPassword
+		}
+		if rc.Secrets.ControllerRecoveryPassword != "" {
+			m.secrets["CONTROLLER_RECOVERY_PASSWORD"] = rc.Secrets.ControllerRecoveryPassword
 		}
 	}
 }
@@ -287,6 +309,11 @@ func (m *wizardModel) handleEnter() (screen, tea.Cmd) {
 				m.values["bootstrap_server_ip"] = ip
 			}
 		}
+		if f.key == "lab_vlan_subnet" && m.values["lab_gateway"] == "" {
+			if gateway := firstUsableIPv4(val); gateway != "" {
+				m.values["lab_gateway"] = gateway
+			}
+		}
 	}
 	return m.advance()
 }
@@ -295,9 +322,17 @@ func (m *wizardModel) advance() (screen, tea.Cmd) {
 	m.cursor++
 
 	if m.cursor >= len(m.fields) {
+		var baseConfig *config.Config
+		var baseSecrets *config.Secrets
+		if m.preload != nil {
+			baseConfig = m.preload.Config
+			baseSecrets = m.preload.Secrets
+		}
 		result := config.WizardResult{
-			Values:  make(map[string]string),
-			Secrets: make(map[string]string),
+			Values:      make(map[string]string),
+			Secrets:     make(map[string]string),
+			BaseConfig:  baseConfig,
+			BaseSecrets: baseSecrets,
 		}
 		for k, v := range m.values {
 			result.Values[k] = v
@@ -401,4 +436,47 @@ func validateCIDR(s string) error {
 		return fmt.Errorf("%q is not a valid CIDR (e.g. 10.0.0.0/24)", strings.TrimSpace(s))
 	}
 	return nil
+}
+
+func validateOptionalSSHFingerprint(s string) error {
+	value := strings.TrimSpace(s)
+	if value == "" {
+		return nil
+	}
+	if !strings.HasPrefix(value, "SHA256:") {
+		return fmt.Errorf("fingerprint must start with SHA256:")
+	}
+	encoded := strings.TrimPrefix(value, "SHA256:")
+	decoded, err := base64.RawStdEncoding.DecodeString(strings.TrimSuffix(encoded, "="))
+	if err != nil || len(decoded) != 32 {
+		return fmt.Errorf("fingerprint must contain a valid SHA-256 digest")
+	}
+	return nil
+}
+
+func validateAbsolutePath(s string) error {
+	value := strings.TrimSpace(s)
+	if !filepath.IsAbs(value) {
+		return fmt.Errorf("path must be absolute")
+	}
+	return nil
+}
+
+func firstUsableIPv4(cidr string) string {
+	ip, network, err := net.ParseCIDR(strings.TrimSpace(cidr))
+	if err != nil {
+		return ""
+	}
+	base := ip.Mask(network.Mask).To4()
+	if base == nil {
+		return ""
+	}
+	gateway := append(net.IP(nil), base...)
+	for i := len(gateway) - 1; i >= 0; i-- {
+		gateway[i]++
+		if gateway[i] != 0 {
+			break
+		}
+	}
+	return gateway.String()
 }

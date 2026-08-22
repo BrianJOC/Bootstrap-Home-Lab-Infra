@@ -5,7 +5,8 @@ vault_version: "1.15.4"
 vault_sha256_amd64: "f42f550713e87cceef2f29a4e2b754491697475e3d26c0c5616314e40edd8e1b"
 vault_sha256_arm64: "79aee168078eb8c0dbb31c283e1136a7575f59fe36fccbb1f1ef6a16e0b67fdb"
 vault_user: vault
-vault_data_dir: /opt/vault/data
+service_data_root: ""
+vault_data_dir: "{{ (service_data_root + '/vault') if service_data_root else '/opt/vault/data' }}"
 vault_config_dir: /etc/vault.d
 vault_cert_dir: /opt/certs
 vault_port: 8200

@@ -33,13 +33,15 @@ type mockSink struct {
 	failed    []string
 }
 
-func (m *mockSink) StageStarted(name string)                                         { m.started = append(m.started, name) }
-func (m *mockSink) StageComplete(name string)                                        { m.completed = append(m.completed, name) }
-func (m *mockSink) StageFailed(name, errMsg, logPath string, logLine int)            { m.failed = append(m.failed, name) }
-func (m *mockSink) Log(level, stage, msg string, fields map[string]string)           {}
-func (m *mockSink) Prompt(label string, masked bool) (string, error)                 { return "", nil }
-func (m *mockSink) Confirm(msg string) (bool, error)                                 { return true, nil }
-func (m *mockSink) ShowWarningBox(lines []string)                                    {}
+func (m *mockSink) StageStarted(name string)  { m.started = append(m.started, name) }
+func (m *mockSink) StageComplete(name string) { m.completed = append(m.completed, name) }
+func (m *mockSink) StageFailed(name, errMsg, logPath string, logLine int) {
+	m.failed = append(m.failed, name)
+}
+func (m *mockSink) Log(level, stage, msg string, fields map[string]string) {}
+func (m *mockSink) Prompt(label string, masked bool) (string, error)       { return "", nil }
+func (m *mockSink) Confirm(msg string) (bool, error)                       { return true, nil }
+func (m *mockSink) ShowWarningBox(lines []string)                          {}
 
 // neverRun returns a runFn that fails the test if called.
 func neverRun(t *testing.T) func(context.Context, *config.Config, *config.Secrets, *runcontext.RunContext, Sink) error {
@@ -64,8 +66,8 @@ func newTestRunner(stages []Stage, sink *mockSink) *Runner {
 	return NewRunner(stages, sink, "/tmp/test.log")
 }
 
-func emptyConfig() *config.Config     { return &config.Config{} }
-func emptySecrets() *config.Secrets   { return &config.Secrets{} }
+func emptyConfig() *config.Config          { return &config.Config{} }
+func emptySecrets() *config.Secrets        { return &config.Secrets{} }
 func emptyContext() *runcontext.RunContext { return runcontext.New("/tmp") }
 
 // ── Runner.Run ────────────────────────────────────────────────────────────────

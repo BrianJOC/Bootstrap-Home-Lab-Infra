@@ -83,7 +83,7 @@ project, project-level CI/CD variables, and committed files (`.gitlab-ci.yml`,
 Manages MAAS network topology: space, fabric, lab VLAN, and lab subnet with DHCP
 dynamic range. Upstream DNS is set to the Technitium server IP.
 
-**Providers:** `maas/maas ~> 2.3`
+**Providers:** `canonical/maas ~> 2.8.0`
 
 ### `k8s-cluster`
 

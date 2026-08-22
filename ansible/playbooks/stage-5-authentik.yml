@@ -1,5 +1,5 @@
 ---
-- name: Stage 4 — Authentik
+- name: Stage 5 — Authentik
   hosts: bootstrap_target
   become: true
   roles:

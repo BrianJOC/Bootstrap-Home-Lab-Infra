@@ -1,0 +1,33 @@
+---
+- name: Prepare the Vault TLS fixture
+  hosts: all
+  become: true
+  tasks:
+    - name: Create the test certificate directory
+      ansible.builtin.file:
+        path: /opt/certs/certificates
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Create a short-lived self-signed wildcard certificate
+      ansible.builtin.command:
+        argv:
+          - openssl
+          - req
+          - -x509
+          - -nodes
+          - -newkey
+          - rsa:2048
+          - -keyout
+          - /opt/certs/certificates/_.home.test.key
+          - -out
+          - /opt/certs/certificates/_.home.test.crt
+          - -days
+          - "1"
+          - -subj
+          - /CN=*.home.test
+          - -addext
+          - subjectAltName=DNS:*.home.test,DNS:home.test
+        creates: /opt/certs/certificates/_.home.test.crt

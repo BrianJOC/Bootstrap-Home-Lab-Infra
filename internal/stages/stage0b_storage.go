@@ -6,6 +6,7 @@ import (
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
 )
@@ -17,18 +18,18 @@ type StorageSetupStage struct{}
 func (s *StorageSetupStage) Name() string { return "storage-setup" }
 
 // Check is a no-op — storage setup has no meaningful pre-check.
-func (s *StorageSetupStage) Check(ctx context.Context, cfg *config.RunConfig) (bool, error) {
+func (s *StorageSetupStage) Check(_ context.Context, _ *config.Config, _ *runcontext.RunContext) (bool, error) {
 	return false, nil
 }
 
 // Run configures the secondary disk via Ansible.
 // When no data disk is configured this is a no-op.
-func (s *StorageSetupStage) Run(ctx context.Context, cfg *config.RunConfig, sink stage.Sink) error {
+func (s *StorageSetupStage) Run(_ context.Context, cfg *config.Config, _ *config.Secrets, rc *runcontext.RunContext, sink stage.Sink) error {
 	if cfg.DataDisk == "" {
 		return nil
 	}
 
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return err
 	}

@@ -1,0 +1,8 @@
+---
+k3s_version: "v1.29.0+k3s1"
+k3s_cluster_name: bootstrap
+k3s_server_url: "https://{{ bootstrap_server_ip }}:6443"
+k3s_config_dir: /etc/rancher/k3s
+k3s_data_dir: /var/lib/rancher/k3s
+k3s_controller_kubeconfig_dir: >-
+  {{ lookup('env', 'HOME') + '/.local/share/bootstrap-home-infra/kubeconfigs' }}

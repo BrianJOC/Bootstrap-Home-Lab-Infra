@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: observability_install
+  author: bootstrap-home-infra
+  description: Install bounded local dashboards, metrics, health checks, and optional paging
+  license: MIT
+  min_ansible_version: "2.15"
+dependencies: []

@@ -1,0 +1,233 @@
+---
+- name: Create lifecycle state directory
+  ansible.builtin.file:
+    path: /var/lib/bootstrap-home-infra
+    state: directory
+    mode: "0700"
+
+- name: Record supported trial mode
+  ansible.builtin.file:
+    path: /var/lib/bootstrap-home-infra/backup-disabled
+    state: "{{ 'absent' if backup_enabled | bool else 'touch' }}"
+    mode: "0600"
+
+- name: Install Restic
+  ansible.builtin.apt:
+    name: restic
+    state: present
+    update_cache: true
+  when: backup_enabled | bool
+
+- name: Create protected backup configuration directory
+  ansible.builtin.file:
+    path: /etc/bootstrap-home-infra/backup
+    state: directory
+    mode: "0700"
+  when: backup_enabled | bool
+
+- name: Store primary Restic repository password
+  ansible.builtin.copy:
+    content: "{{ restic_primary_password }}"
+    dest: /etc/bootstrap-home-infra/backup/restic-primary-password
+    mode: "0600"
+  no_log: true
+  when: backup_enabled | bool
+
+- name: Write primary Restic environment
+  ansible.builtin.template:
+    src: restic-primary.env.j2
+    dest: /etc/bootstrap-home-infra/backup/primary.env
+    mode: "0600"
+  when: backup_enabled | bool
+
+- name: Validate mounted primary repository destination
+  ansible.builtin.command:
+    cmd: "findmnt --target {{ backup_repository }}"
+  changed_when: false
+  when:
+    - backup_enabled | bool
+    - backup_repository is match('^/mnt/')
+
+- name: Inspect primary Restic repository
+  ansible.builtin.command:
+    cmd: restic snapshots --json
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repository }}"
+    RESTIC_PASSWORD_FILE: /etc/bootstrap-home-infra/backup/restic-primary-password
+  register: restic_repository_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when: backup_enabled | bool
+
+- name: Initialize an empty primary Restic repository
+  ansible.builtin.command:
+    cmd: restic init
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repository }}"
+    RESTIC_PASSWORD_FILE: /etc/bootstrap-home-infra/backup/restic-primary-password
+  no_log: true
+  when:
+    - backup_enabled | bool
+    - restic_repository_probe.rc != 0
+
+- name: Record immutable primary repository identity
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      restic cat config | sha256sum | awk '{print $1}' >
+      /etc/bootstrap-home-infra/backup/primary-repository-id
+    executable: /bin/bash
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_repository }}"
+    RESTIC_PASSWORD_FILE: /etc/bootstrap-home-infra/backup/restic-primary-password
+  changed_when: false
+  no_log: true
+  when: backup_enabled | bool
+
+- name: Apply explicit retention approval
+  ansible.builtin.file:
+    path: /etc/bootstrap-home-infra/backup/retention-approved
+    state: "{{ 'touch' if backup_retention_approved | bool else 'absent' }}"
+    mode: "0600"
+  when: backup_enabled | bool
+
+- name: Install application-consistent backup implementation
+  ansible.builtin.template:
+    src: bootstrap-backup.sh.j2
+    dest: /usr/local/sbin/bootstrap-backup
+    mode: "0700"
+  when: backup_enabled | bool
+
+- name: Install post-apply critical checkpoint hook
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
+      if [ ! -x /usr/local/sbin/bootstrap-backup ]; then
+        echo "post-apply checkpoint skipped: backup trial mode" >&2
+        exit 0
+      fi
+      exec /usr/local/sbin/bootstrap-backup
+    dest: /usr/local/sbin/bootstrap-gitlab-checkpoint
+    mode: "0700"
+
+- name: Allow only the GitLab Runner checkpoint hook without a password
+  ansible.builtin.copy:
+    content: "gitlab-runner ALL=(root) NOPASSWD: /usr/local/sbin/bootstrap-gitlab-checkpoint\n"
+    dest: /etc/sudoers.d/bootstrap-gitlab-checkpoint
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Install primary backup systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - bootstrap-backup.service
+    - bootstrap-backup.timer
+  when: backup_enabled | bool
+
+- name: Apply primary backup timer policy
+  ansible.builtin.systemd:
+    name: bootstrap-backup.timer
+    state: "{{ 'started' if backup_enabled | bool else 'stopped' }}"
+    enabled: "{{ backup_enabled | bool }}"
+    daemon_reload: true
+
+- name: Mark backup disabled if no repository was selected
+  ansible.builtin.copy:
+    content: "backup protection is not configured (trial mode)\n"
+    dest: /var/lib/bootstrap-home-infra/backup-status
+    mode: "0600"
+  when: not backup_enabled | bool
+
+- name: Store USB Restic repository password
+  ansible.builtin.copy:
+    content: "{{ restic_usb_password }}"
+    dest: /etc/bootstrap-home-infra/backup/restic-usb-password
+    mode: "0600"
+  no_log: true
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+
+- name: Validate mounted USB repository destination
+  ansible.builtin.command:
+    cmd: "findmnt --target {{ backup_usb_repository }}"
+  changed_when: false
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+    - backup_usb_repository is match('^/mnt/')
+
+- name: Inspect USB Restic repository
+  ansible.builtin.command:
+    cmd: restic snapshots --json
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_usb_repository }}"
+    RESTIC_PASSWORD_FILE: /etc/bootstrap-home-infra/backup/restic-usb-password
+  register: restic_usb_probe
+  changed_when: false
+  failed_when: false
+  no_log: true
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+
+- name: Initialize an empty USB Restic repository
+  ansible.builtin.command:
+    cmd: restic init
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_usb_repository }}"
+    RESTIC_PASSWORD_FILE: /etc/bootstrap-home-infra/backup/restic-usb-password
+  no_log: true
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+    - restic_usb_probe.rc != 0
+
+- name: Record immutable USB repository identity
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      restic cat config | sha256sum | awk '{print $1}' >
+      /etc/bootstrap-home-infra/backup/usb-repository-id
+    executable: /bin/bash
+  environment:
+    RESTIC_REPOSITORY: "{{ backup_usb_repository }}"
+    RESTIC_PASSWORD_FILE: /etc/bootstrap-home-infra/backup/restic-usb-password
+  changed_when: false
+  no_log: true
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+
+- name: Install verified offline-copy implementation
+  ansible.builtin.template:
+    src: bootstrap-backup-copy-usb.sh.j2
+    dest: /usr/local/sbin/bootstrap-backup-copy-usb
+    mode: "0700"
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+
+- name: Install USB copy systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    mode: "0644"
+  loop:
+    - bootstrap-backup-copy-usb.service
+    - bootstrap-backup-copy-usb.timer
+  when:
+    - backup_enabled | bool
+    - backup_usb_enabled | bool
+
+- name: Apply USB copy timer policy
+  ansible.builtin.systemd:
+    name: bootstrap-backup-copy-usb.timer
+    state: "{{ 'started' if (backup_enabled | bool and backup_usb_enabled | bool and backup_usb_copy_interval != 'manual') else 'stopped' }}"
+    enabled: "{{ backup_enabled | bool and backup_usb_enabled | bool and backup_usb_copy_interval != 'manual' }}"
+    daemon_reload: true

@@ -1,0 +1,3 @@
+[Journal]
+MaxRetentionSec={{ journal_retention_days }}day
+SystemMaxUse={{ [observability_storage_limit_gb | int, 2] | min }}G

@@ -42,7 +42,12 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 	r.sink.Log("info", "ansible", fmt.Sprintf("running playbook %s with vars: %s", playbookPath, strings.Join(keys, ", ")), nil)
 
 	// Write a temp INI inventory so the [bootstrap_target] group is defined.
-	invFile, err := buildInventoryFile(strings.TrimSuffix(inventory, ","))
+	invFile, err := buildInventoryFile(
+		strings.TrimSuffix(inventory, ","),
+		r.sshClient.User(),
+		r.sshClient.KeyPath(),
+		r.sshClient.KnownHostsPath(),
+	)
 	if err != nil {
 		return fmt.Errorf("building inventory: %w", err)
 	}
@@ -120,24 +125,33 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 // IMPORTANT: Any new secret added to config.Secrets that may be present in
 // the process environment must also be listed here to prevent leakage.
 var secretEnvKeys = map[string]struct{}{
-	"CF_DNS_API_TOKEN":          {},
-	"CLOUDFLARE_DNS_API_TOKEN":  {},
-	"BOOTSTRAP_ADMIN_PASSWORD":  {},
+	"CF_DNS_API_TOKEN":             {},
+	"CLOUDFLARE_DNS_API_TOKEN":     {},
+	"BOOTSTRAP_ADMIN_PASSWORD":     {},
+	"RESTIC_PRIMARY_PASSWORD":      {},
+	"RESTIC_USB_PASSWORD":          {},
+	"CONTROLLER_RECOVERY_PASSWORD": {},
+	"PAGING_DESTINATION_URL":       {},
 }
 
-// safeEnv returns os.Environ() with all known bootstrap secret keys removed.
+// safeEnv returns os.Environ() with all known bootstrap secret keys removed
+// and host-key verification explicitly enabled.
 func safeEnv() []string {
 	raw := os.Environ()
-	filtered := make([]string, 0, len(raw))
+	filtered := make([]string, 0, len(raw)+1)
 	for _, kv := range raw {
 		key := kv
 		if idx := strings.Index(kv, "="); idx >= 0 {
 			key = kv[:idx]
 		}
+		if key == "ANSIBLE_HOST_KEY_CHECKING" {
+			continue
+		}
 		if _, blocked := secretEnvKeys[key]; !blocked {
 			filtered = append(filtered, kv)
 		}
 	}
+	filtered = append(filtered, "ANSIBLE_HOST_KEY_CHECKING=True")
 	return filtered
 }
 
@@ -145,13 +159,24 @@ func safeEnv() []string {
 // [bootstrap_target] group expected by all stage playbooks. The hostPort
 // argument is "host:port" or bare "host" (port defaults to 22).
 // The caller must remove the returned file when done.
-func buildInventoryFile(hostPort string) (string, error) {
+func buildInventoryFile(hostPort, user, keyPath, knownHostsPath string) (string, error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		host = hostPort
 		port = "22"
 	}
-	content := fmt.Sprintf("[bootstrap_target]\n%s ansible_port=%s\n", host, port)
+	sshArgs := fmt.Sprintf(
+		"-o StrictHostKeyChecking=yes -o UserKnownHostsFile=%s",
+		knownHostsPath,
+	)
+	content := fmt.Sprintf(
+		"[bootstrap_target]\ntarget ansible_host=%q ansible_port=%s ansible_user=%q ansible_ssh_private_key_file=%q ansible_ssh_common_args=%q\n",
+		host,
+		port,
+		user,
+		keyPath,
+		sshArgs,
+	)
 	f, err := os.CreateTemp("", "bootstrap-inventory-*.ini")
 	if err != nil {
 		return "", err

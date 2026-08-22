@@ -1,57 +1,73 @@
 ---
-- name: Assert supported architecture
-  ansible.builtin.assert:
-    that: ansible_architecture in ['x86_64', 'aarch64']
-    fail_msg: "Unsupported architecture '{{ ansible_architecture }}'. Only x86_64 and aarch64 are supported."
+- name: Install the requested Vault binary
+  when: vault_needs_install
+  block:
+    - name: Assert supported architecture
+      ansible.builtin.assert:
+        that: ansible_facts['architecture'] in ['x86_64', 'aarch64']
+        fail_msg: >-
+          Unsupported architecture '{{ ansible_facts['architecture'] }}'.
+          Only x86_64 and aarch64 are supported.
 
-- name: Set vault_arch and checksum facts
-  ansible.builtin.set_fact:
-    vault_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
-    vault_sha256: "{{ vault_sha256_amd64 if ansible_architecture == 'x86_64' else vault_sha256_arm64 }}"
+    - name: Set vault_arch and checksum facts
+      ansible.builtin.set_fact:
+        vault_arch: "{{ 'amd64' if ansible_facts['architecture'] == 'x86_64' else 'arm64' }}"
+        vault_sha256: >-
+          {{ vault_sha256_amd64
+             if ansible_facts['architecture'] == 'x86_64'
+             else vault_sha256_arm64 }}
 
-- name: Install unzip dependency
-  ansible.builtin.apt:
-    name: unzip
-    state: present
-    update_cache: true
+    - name: Install unzip dependency
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+        update_cache: true
 
-- name: Create temp directory for vault download
-  ansible.builtin.tempfile:
-    state: directory
-    suffix: vault
-  register: vault_tmp_dir
+    - name: Create temp directory for vault download
+      ansible.builtin.tempfile:
+        state: directory
+        suffix: vault
+      register: vault_tmp_dir
 
-- name: Download Vault binary zip
-  ansible.builtin.get_url:
-    url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_{{ vault_arch }}.zip"
-    dest: "{{ vault_tmp_dir.path }}/vault.zip"
-    checksum: "sha256:{{ vault_sha256 }}"
-    mode: "0644"
+    - name: Download Vault binary zip
+      ansible.builtin.get_url:
+        url: "https://releases.hashicorp.com/vault/{{ vault_version }}/vault_{{ vault_version }}_linux_{{ vault_arch }}.zip"
+        dest: "{{ vault_tmp_dir.path }}/vault.zip"
+        checksum: "sha256:{{ vault_sha256 }}"
+        mode: "0644"
 
-- name: Unzip Vault binary
-  ansible.builtin.unarchive:
-    src: "{{ vault_tmp_dir.path }}/vault.zip"
-    dest: "{{ vault_tmp_dir.path }}"
-    remote_src: true
+    - name: Unzip Vault binary
+      ansible.builtin.unarchive:
+        src: "{{ vault_tmp_dir.path }}/vault.zip"
+        dest: "{{ vault_tmp_dir.path }}"
+        remote_src: true
 
-- name: Install vault binary
-  ansible.builtin.copy:
-    src: "{{ vault_tmp_dir.path }}/vault"
-    dest: /usr/local/bin/vault
-    mode: "0755"
-    remote_src: true
+    - name: Install vault binary
+      ansible.builtin.copy:
+        src: "{{ vault_tmp_dir.path }}/vault"
+        dest: /usr/local/bin/vault
+        mode: "0755"
+        remote_src: true
 
-- name: Clean up temp directory
-  ansible.builtin.file:
-    path: "{{ vault_tmp_dir.path }}"
-    state: absent
+    - name: Clean up temp directory
+      ansible.builtin.file:
+        path: "{{ vault_tmp_dir.path }}"
+        state: absent
 
-# Set vault capabilities for IPC_LOCK
+- name: Read Vault binary capabilities
+  ansible.builtin.command: getcap /usr/local/bin/vault
+  register: vault_binary_capabilities
+  changed_when: false
+  failed_when: false
+
+# Set vault capabilities for IPC_LOCK only when absent. The capabilities module
+# reports changed unconditionally on some distributions when "+ep" is supplied.
 - name: Set vault binary capabilities
   community.general.capabilities:
     path: /usr/local/bin/vault
     capability: cap_ipc_lock=+ep
     state: present
+  when: "'cap_ipc_lock=ep' not in vault_binary_capabilities.stdout"
 
 # Create vault system user
 - name: Create vault system user

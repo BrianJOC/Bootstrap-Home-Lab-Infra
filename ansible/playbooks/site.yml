@@ -6,6 +6,9 @@
 - name: Stage 0 — Connectivity Check
   import_playbook: stage-0-config.yml
 
+- name: Stage 0B — Optional storage
+  import_playbook: stage-0b-storage.yml
+
 - name: Stage 1 — DNS
   import_playbook: stage-1-dns.yml
 
@@ -15,14 +18,20 @@
 - name: Stage 3 — Vault
   import_playbook: stage-3-vault.yml
 
-- name: Stage 4 — Authentik
-  import_playbook: stage-4-authentik.yml
+- name: Stage 4 — PostgreSQL
+  import_playbook: stage-4-postgres.yml
 
-- name: Stage 5 — PostgreSQL
-  import_playbook: stage-5-postgres.yml
+- name: Stage 5 — Authentik
+  import_playbook: stage-5-authentik.yml
 
 - name: Stage 6 — GitLab + Runner
   import_playbook: stage-6-gitlab.yml
 
 - name: Stage 7 — MAAS
   import_playbook: stage-7-maas.yml
+
+- name: Stage 8 — k3s
+  import_playbook: stage-8-k3s.yml
+
+- name: Stage 9 — Target-host lifecycle
+  import_playbook: stage-9-lifecycle.yml

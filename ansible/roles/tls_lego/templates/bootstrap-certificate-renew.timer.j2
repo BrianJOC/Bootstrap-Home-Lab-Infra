@@ -1,0 +1,11 @@
+[Unit]
+Description=Check the homelab wildcard certificate renewal window
+
+[Timer]
+OnCalendar={{ certificate_renewal_on_calendar }}
+RandomizedDelaySec={{ certificate_renewal_randomized_delay }}
+Persistent=true
+Unit=bootstrap-certificate-renew.service
+
+[Install]
+WantedBy=timers.target

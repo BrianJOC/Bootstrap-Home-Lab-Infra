@@ -1,0 +1,8 @@
+---
+- name: Stage 9 — target-host lifecycle
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - backup_install
+    - maintenance_install
+    - observability_install

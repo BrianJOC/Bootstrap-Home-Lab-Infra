@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 
 	"github.com/homelab/bootstrap-home-infra/internal/config"
@@ -43,7 +42,7 @@ func (s *ConfigStage) Run(ctx context.Context, cfg *config.Config, sec *config.S
 	}
 
 	// SSH connectivity with re-prompt loop on auth failure (B4).
-	client, err := s.dialWithRetry(ctx, cfg, sink)
+	client, err := s.dialWithRetry(ctx, cfg, rc, sink)
 	if err != nil {
 		return err
 	}
@@ -74,18 +73,6 @@ func (s *ConfigStage) Run(ctx context.Context, cfg *config.Config, sec *config.S
 		return err
 	}
 
-	// Write config.yaml to the path the operator passed via --config.
-	sink.Log("info", s.Name(), fmt.Sprintf("writing config.yaml to %s", rc.ConfigPath), nil)
-	if err := writeConfigYAML(cfg, rc.ConfigPath); err != nil {
-		return fmt.Errorf("writing config.yaml: %w", err)
-	}
-
-	// Write .env to the path the operator passed via --env.
-	sink.Log("info", s.Name(), fmt.Sprintf("writing .env to %s", rc.EnvPath), nil)
-	if err := writeEnvFile(sec, rc.EnvPath); err != nil {
-		return fmt.Errorf("writing .env: %w", err)
-	}
-
 	// Write run manifest with real SHA-256 hash (B2).
 	sink.Log("info", s.Name(), "writing run manifest", nil)
 	if err := writeManifest(cfg, rc); err != nil {
@@ -97,22 +84,22 @@ func (s *ConfigStage) Run(ctx context.Context, cfg *config.Config, sec *config.S
 }
 
 // dialWithRetry attempts SSH connection, re-prompting on auth failure (B4).
-func (s *ConfigStage) dialWithRetry(ctx context.Context, cfg *config.Config, sink stage.Sink) (*ssh.Client, error) {
+func (s *ConfigStage) dialWithRetry(ctx context.Context, cfg *config.Config, rc *runcontext.RunContext, sink stage.Sink) (*ssh.Client, error) {
 	keyPath := cfg.SSHKeyPath
 	host := cfg.TargetHost
 	user := cfg.SSHUser
+
+	if err := s.ensureHostTrust(cfg, rc, sink); err != nil {
+		return nil, err
+	}
 
 	for attempt := 1; attempt <= 3; attempt++ {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
 		sink.Log("info", s.Name(), fmt.Sprintf("testing SSH connectivity to %s (attempt %d)", host, attempt), nil)
-		client, err := ssh.New(host, user, keyPath)
+		client, err := ssh.New(host, user, keyPath, rc.KnownHostsPath)
 		if err == nil {
-			sink.Log("warn", s.Name(),
-				"SSH host key verification is disabled for bootstrap — verify the target's fingerprint out-of-band",
-				map[string]string{"host": host},
-			)
 			return client, nil
 		}
 
@@ -149,6 +136,85 @@ func (s *ConfigStage) dialWithRetry(ctx context.Context, cfg *config.Config, sin
 		}
 	}
 	return nil, fmt.Errorf("SSH connectivity failed after retries")
+}
+
+func (s *ConfigStage) ensureHostTrust(cfg *config.Config, rc *runcontext.RunContext, sink stage.Sink) error {
+	sink.Log("info", s.Name(), "observing SSH host identity before authentication", map[string]string{"target": cfg.TargetHost})
+	info, err := ssh.ObserveHostKey(cfg.TargetHost)
+	if err != nil {
+		return err
+	}
+	state, oldFingerprint, err := ssh.InspectHostKey(rc.KnownHostsPath, cfg.TargetHost, info.Key)
+	if err != nil {
+		return err
+	}
+	if cfg.SSHHostFingerprint != "" && cfg.SSHHostFingerprint != info.Fingerprint {
+		return fmt.Errorf("observed SSH fingerprint %s does not match configured ssh_host_fingerprint %s", info.Fingerprint, cfg.SSHHostFingerprint)
+	}
+
+	details := fmt.Sprintf("target=%s address=%s algorithm=%s fingerprint=%s",
+		info.Target, info.Address, info.Algorithm, info.Fingerprint)
+
+	switch state {
+	case ssh.TrustMatch:
+		sink.Log("info", s.Name(), "SSH host identity matches the pinned key", map[string]string{"fingerprint": info.Fingerprint})
+		return nil
+
+	case ssh.TrustUnknown:
+		if rc.Headless {
+			if cfg.SSHHostFingerprint == "" && !rc.AcceptNewHostKey {
+				return fmt.Errorf("SSH host is unknown; headless first use requires ssh_host_fingerprint or --accept-new-host-key")
+			}
+		} else {
+			accepted, confirmErr := sink.Confirm("Unknown SSH host. Confirm this fingerprint and pin it? " + details)
+			if confirmErr != nil {
+				return fmt.Errorf("confirming SSH host identity: %w", confirmErr)
+			}
+			if !accepted {
+				return fmt.Errorf("SSH host fingerprint was not accepted")
+			}
+		}
+		if err := ssh.PinHostKey(rc.KnownHostsPath, cfg.TargetHost, info.Key); err != nil {
+			return err
+		}
+		sink.Log("info", s.Name(), "pinned new SSH host identity", map[string]string{"fingerprint": info.Fingerprint})
+		return nil
+
+	case ssh.TrustChanged:
+		if rc.Headless {
+			if !rc.ReplaceHostKey || cfg.SSHHostFingerprint == "" {
+				return fmt.Errorf("SSH host key changed from %s to %s; headless replacement requires --replace-host-key and the expected ssh_host_fingerprint", oldFingerprint, info.Fingerprint)
+			}
+		} else {
+			accepted, confirmErr := sink.Confirm(fmt.Sprintf(
+				"SSH HOST KEY CHANGED from %s to %s. Did you intentionally reinstall or replace %s?",
+				oldFingerprint, info.Fingerprint, cfg.TargetHost,
+			))
+			if confirmErr != nil {
+				return fmt.Errorf("confirming changed SSH host identity: %w", confirmErr)
+			}
+			if !accepted {
+				return fmt.Errorf("changed SSH host key was not accepted")
+			}
+			typedTarget, promptErr := sink.Prompt("Type the target exactly to replace its pinned SSH key: "+cfg.TargetHost, false)
+			if promptErr != nil {
+				return fmt.Errorf("confirming target for SSH key replacement: %w", promptErr)
+			}
+			if strings.TrimSpace(typedTarget) != cfg.TargetHost {
+				return fmt.Errorf("target confirmation did not match; pinned SSH key was not changed")
+			}
+		}
+		if err := ssh.PinHostKey(rc.KnownHostsPath, cfg.TargetHost, info.Key); err != nil {
+			return err
+		}
+		sink.Log("warn", s.Name(), "replaced changed SSH host identity", map[string]string{
+			"old_fingerprint": oldFingerprint,
+			"new_fingerprint": info.Fingerprint,
+		})
+		return nil
+	default:
+		return fmt.Errorf("unsupported SSH trust state")
+	}
 }
 
 // checkOS validates the target is Ubuntu >= 22.04 (B3).
@@ -202,50 +268,6 @@ func versionAtLeast(ver, min string) bool {
 		}
 	}
 	return true // equal
-}
-
-// writeConfigYAML writes the structural config to the given path using yaml.v3.
-func writeConfigYAML(cfg *config.Config, path string) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshalling config: %w", err)
-	}
-	return os.WriteFile(path, data, 0600)
-}
-
-// writeEnvFile writes secrets to the given path with properly quoted values.
-// The file is created at 0600 from the start — no chmod race window.
-func writeEnvFile(sec *config.Secrets, path string) error {
-	envMap := map[string]string{
-		"CF_DNS_API_TOKEN":         sec.CloudflareAPIToken,
-		"BOOTSTRAP_ADMIN_PASSWORD": sec.AdminPassword,
-	}
-	// godotenv.Marshal returns properly quoted KEY="VALUE" content.
-	content, err := godotenv.Marshal(envMap)
-	if err != nil {
-		return fmt.Errorf("marshalling .env content: %w", err)
-	}
-	// Open at 0600 from creation — eliminates the write-then-chmod race.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("creating .env: %w", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(content + "\n"); err != nil {
-		return fmt.Errorf("writing .env content: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing .env: %w", err)
-	}
-	// Belt-and-suspenders: verify final mode.
-	fi, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("stat .env: %w", err)
-	}
-	if fi.Mode().Perm() != 0600 {
-		return fmt.Errorf(".env file mode is %o, expected 0600", fi.Mode().Perm())
-	}
-	return nil
 }
 
 // manifest is written to the run directory as manifest.json.

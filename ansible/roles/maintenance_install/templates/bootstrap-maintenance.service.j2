@@ -1,0 +1,11 @@
+[Unit]
+Description=Apply reviewed or deadline-approved application maintenance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bootstrap-maintenance
+TimeoutStartSec={{ upgrade_maintenance_admission_window }}
+PrivateTmp=yes
+ProtectHome=yes

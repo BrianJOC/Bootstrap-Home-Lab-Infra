@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -10,9 +12,11 @@ import (
 // WizardResult is the output of the first-run wizard.
 // Defined in internal/config so internal/tui can import it without creating a cycle.
 type WizardResult struct {
-	Values  map[string]string // structural config fields by yaml key
-	Secrets map[string]string // "CF_DNS_API_TOKEN", "BOOTSTRAP_ADMIN_PASSWORD"
-	Noop    bool              // true = existing config accepted at preamble; skip file writes
+	Values      map[string]string
+	Secrets     map[string]string
+	BaseConfig  *Config
+	BaseSecrets *Secrets
+	Noop        bool
 }
 
 // DeriveBootstrapServerIP implements the bootstrap_server_ip decision tree.
@@ -56,38 +60,71 @@ func FromWizardResult(r WizardResult) (*RunConfig, error) {
 	}
 
 	targetHost, err := mustGet("target_host")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	sshUser, err := mustGet("ssh_user")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	sshKeyPath, err := mustGet("ssh_key_path")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	internalDomain, err := mustGet("internal_domain")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	cfZoneID, err := mustGet("cloudflare_zone_id")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	bootstrapIP, err := mustGet("bootstrap_server_ip")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	labVLANSubnet, err := mustGet("lab_vlan_subnet")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
+	labGateway := strings.TrimSpace(r.Values["lab_gateway"])
+	if labGateway == "" {
+		labGateway, err = defaultLabGateway(labVLANSubnet)
+		if err != nil {
+			return nil, err
+		}
+	}
 	adminEmail, err := mustGet("admin_email")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	cfToken, err := mustSecret("CF_DNS_API_TOKEN")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	adminPass, err := mustSecret("BOOTSTRAP_ADMIN_PASSWORD")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
-	cfg := &Config{
-		TargetHost:        targetHost,
-		SSHUser:           sshUser,
-		SSHKeyPath:        sshKeyPath,
-		InternalDomain:    internalDomain,
-		CloudflareZoneID:  cfZoneID,
-		BootstrapServerIP: bootstrapIP,
-		LabVLANSubnet:     labVLANSubnet,
-		AdminEmail:        adminEmail,
-		VaultShares:       5,
-		VaultThreshold:    3,
+	cfg := DefaultConfig()
+	if r.BaseConfig != nil && strings.TrimSpace(r.BaseConfig.TargetHost) != "" {
+		base := *r.BaseConfig
+		cfg = &base
+	}
+	cfg.TargetHost = targetHost
+	cfg.SSHUser = sshUser
+	cfg.SSHKeyPath = sshKeyPath
+	cfg.SSHHostFingerprint = strings.TrimSpace(r.Values["ssh_host_fingerprint"])
+	cfg.InternalDomain = internalDomain
+	cfg.CloudflareZoneID = cfZoneID
+	cfg.BootstrapServerIP = bootstrapIP
+	cfg.LabVLANSubnet = labVLANSubnet
+	cfg.LabGateway = labGateway
+	cfg.AdminEmail = adminEmail
+	if value := strings.TrimSpace(r.Values["vault_init_output_path"]); value != "" {
+		cfg.VaultInitOutputPath = value
 	}
 	if v := r.Values["lab_vlan_id"]; v != "" {
 		id, err := strconv.Atoi(strings.TrimSpace(v))
@@ -97,15 +134,53 @@ func FromWizardResult(r WizardResult) (*RunConfig, error) {
 		cfg.LabVLANID = id
 	}
 
-	rc := &RunConfig{
-		Config: cfg,
-		Secrets: &Secrets{
-			CloudflareAPIToken: cfToken,
-			AdminPassword:      adminPass,
-		},
+	sec := &Secrets{}
+	if r.BaseSecrets != nil {
+		base := *r.BaseSecrets
+		sec = &base
 	}
+	sec.CloudflareAPIToken = cfToken
+	sec.AdminPassword = adminPass
+	setSecretIfPresent := func(key string, destination *string) {
+		if value, ok := r.Secrets[key]; ok {
+			*destination = value
+		}
+	}
+	setSecretIfPresent("RESTIC_PRIMARY_PASSWORD", &sec.ResticPrimaryPassword)
+	setSecretIfPresent("RESTIC_USB_PASSWORD", &sec.ResticUSBPassword)
+	setSecretIfPresent("CONTROLLER_RECOVERY_PASSWORD", &sec.ControllerRecoveryPassword)
+	setSecretIfPresent("PAGING_DESTINATION_URL", &sec.PagingDestinationURL)
+
+	rc := &RunConfig{Config: cfg, Secrets: sec}
 	if err := Validate(rc); err != nil {
 		return nil, fmt.Errorf("wizard result failed validation: %w", err)
 	}
 	return rc, nil
+}
+
+func defaultLabGateway(subnet string) (string, error) {
+	ip, network, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return "", fmt.Errorf("cannot derive lab_gateway from %q: %w", subnet, err)
+	}
+	base := ip.Mask(network.Mask).To4()
+	if base == nil {
+		return "", fmt.Errorf("automatic lab_gateway derivation currently requires an IPv4 subnet")
+	}
+	gateway := append(net.IP(nil), base...)
+	for i := len(gateway) - 1; i >= 0; i-- {
+		gateway[i]++
+		if gateway[i] != 0 {
+			break
+		}
+	}
+	return gateway.String(), nil
+}
+
+func defaultVaultInitOutputPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil || homeDir == "" {
+		return filepath.Join(os.TempDir(), "bootstrap-home-infra", "recovery", "vault-init.json")
+	}
+	return filepath.Join(homeDir, ".local", "share", "bootstrap-home-infra", "recovery", "vault-init.json")
 }

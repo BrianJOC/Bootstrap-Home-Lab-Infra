@@ -249,14 +249,14 @@ func (m *progressModel) View() string {
 	switch m.mode {
 	case "warning":
 		content := strings.Join(m.warningLines, "\n")
-		bottom = styleWarningBox.Width(m.width - 4).Render(content) + "\n(Press any key to continue)"
+		bottom = styleWarningBox.Width(m.width-4).Render(content) + "\n(Press any key to continue)"
 	case "prompt":
 		bottom = stylePromptLabel.Render(m.promptMsg) + "\n" + m.input.View()
 	case "verify":
 		bottom = stylePromptLabel.Render(m.verifyMsg)
 	default:
 		if m.errMsg != "" {
-			bottom = styleErrorPanel.Width(m.width-4).Render("ERROR: " + m.errMsg)
+			bottom = styleErrorPanel.Width(m.width - 4).Render("ERROR: " + m.errMsg)
 		}
 	}
 

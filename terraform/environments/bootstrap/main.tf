@@ -12,15 +12,15 @@ terraform {
     }
     authentik = {
       source  = "goauthentik/authentik"
-      version = "~> 2024.2.0"  # patch-pinned — see authentik-config/main.tf
+      version = "~> 2024.2.0" # patch-pinned — see authentik-config/main.tf
     }
     gitlab = {
       source  = "gitlabhq/gitlab"
       version = "~> 16.0"
     }
     maas = {
-      source  = "maas/maas"
-      version = "~> 2.3"
+      source  = "canonical/maas"
+      version = "~> 2.8.0"
     }
   }
 }
@@ -39,11 +39,11 @@ module "dns_records" {
   # Default bootstrap service records; operator may extend via var.dns_records
   records = concat(
     [
-      { name = "vault",      type = "A", value = var.bootstrap_server_ip, ttl = 300 },
-      { name = "authentik",  type = "A", value = var.bootstrap_server_ip, ttl = 300 },
-      { name = "gitlab",     type = "A", value = var.bootstrap_server_ip, ttl = 300 },
+      { name = "vault", type = "A", value = var.bootstrap_server_ip, ttl = 300 },
+      { name = "authentik", type = "A", value = var.bootstrap_server_ip, ttl = 300 },
+      { name = "gitlab", type = "A", value = var.bootstrap_server_ip, ttl = 300 },
       { name = "technitium", type = "A", value = var.bootstrap_server_ip, ttl = 300 },
-      { name = "maas",       type = "A", value = var.bootstrap_server_ip, ttl = 300 },
+      { name = "maas", type = "A", value = var.bootstrap_server_ip, ttl = 300 },
     ],
     var.dns_records,
   )
@@ -65,7 +65,7 @@ module "vault_config" {
 
 # ── Authentik Configuration ───────────────────────────────────────────────────
 # Creates groups, OIDC providers, and applications for bootstrap services.
-# Runs after Stage 4 (Authentik) is operational.
+# Runs after Stage 5 (Authentik) is operational.
 
 module "authentik_config" {
   source = "../../modules/authentik-config"
@@ -86,8 +86,6 @@ module "authentik_config" {
       groups       = ["adults"]
     },
   ]
-
-  depends_on = [module.vault_config]
 }
 
 # ── GitLab Configuration ──────────────────────────────────────────────────────
@@ -101,8 +99,6 @@ module "gitlab_config" {
   gitlab_token    = var.gitlab_token
   vault_address   = var.vault_address
   internal_domain = var.internal_domain
-
-  depends_on = [module.vault_config]
 }
 
 # ── MAAS Configuration ────────────────────────────────────────────────────────
@@ -112,12 +108,13 @@ module "gitlab_config" {
 module "maas_config" {
   source = "../../modules/maas-config"
 
-  maas_api_url    = var.maas_api_url
-  maas_api_key    = var.maas_api_key
-  lab_subnet      = var.lab_subnet
-  lab_vlan_id     = var.lab_vlan_id
-  dns_server      = var.bootstrap_server_ip
-  lab_gateway     = var.lab_gateway
-  dhcp_range_low  = var.dhcp_range_low
-  dhcp_range_high = var.dhcp_range_high
+  maas_api_url      = var.maas_api_url
+  maas_api_key      = var.maas_api_key
+  lab_subnet        = var.lab_subnet
+  lab_vlan_id       = var.lab_vlan_id
+  dns_server        = var.bootstrap_server_ip
+  lab_gateway       = var.lab_gateway
+  dhcp_range_low    = var.dhcp_range_low
+  dhcp_range_high   = var.dhcp_range_high
+  maas_dhcp_enabled = var.maas_dhcp_enabled
 }

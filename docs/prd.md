@@ -1,7 +1,7 @@
 # PRD: bootstrap-home-infra
 
 > Status: Complete — all open questions resolved. Ready for workflow-architect.
-> Last updated: 2026-03-19
+> Last updated: 2026-07-27
 
 ---
 
@@ -28,9 +28,10 @@ point forward, the user interacts exclusively via CLI and GitOps: defining a new
 service in a YAML/HCL file, merging it, and having it automatically provisioned
 with DNS, TLS, and optional Authentik SSO — on the appropriate server or
 k3s scheduler. New physical servers are adopted via a single CLI command that
-validates BMC/IPMI and opens a GitLab MR. The user never manages passwords
-manually; everything flows through Vault. The tool is re-runnable, targetable
-at any machine, and idempotent.
+validates BMC/IPMI and opens a GitLab MR. Vault is the authoritative credential
+store; core host services may retain minimum root-owned runtime copies needed
+for reliable recovery. The tool is re-runnable, targetable at any machine, and
+idempotent.
 
 ---
 
@@ -50,8 +51,9 @@ at any machine, and idempotent.
    deployment target
 7. Users assigned to `adults` or `kids` groups in Authentik have access enforced
    per service definition
-8. All credentials are stored in Vault; no passwords exist in git, logs, or
-   plaintext config
+8. All platform credentials are recorded authoritatively in Vault; no passwords
+   exist in git, logs, or non-secret structural config. Minimum runtime copies
+   may exist in root-owned files with mode `0600`
 9. The bootstrap tool targets either x86 or ARM Ubuntu without code changes
 10. Certs are publicly trusted (Cloudflare DNS-01), automatically renewed, and
     distributed through Vault
@@ -63,6 +65,35 @@ at any machine, and idempotent.
 14. After bootstrap completes, all service configuration is expressed as
     Terraform code in GitLab; local Terraform state is migrated to the GitLab
     HTTP backend; no service configuration exists outside of IaC
+15. Bootstrap leaves existing home networks unchanged, installs MAAS with DHCP
+    disabled by default, and provides a verified UniFi procedure for rolling
+    Technitium DNS out to the whole home one network at a time
+16. The wizard presents an encrypted TrueNAS/Restic backup profile with visible
+    schedules and retention defaults, allows every interval to be changed or
+    backups to be disabled, and supports a verified removable USB copy
+17. A no-repository trial profile can complete bootstrap with persistent
+    unprotected-status warnings and later enable backups in place; after reboot,
+    core services recover before manual Vault unseal while Vault-dependent
+    automation remains safely paused
+18. A host-managed timer automatically renews certificates using a zone-scoped
+    Cloudflare token, atomically deploys validated material with consumer
+    rollback, and defers Vault synchronization when Vault is sealed
+19. Application upgrades have configurable review deadlines and maintenance
+    windows; overdue changes become policy-approved but still require backup,
+    compatibility, migration, health, and rollback gates. Ubuntu security
+    patches install automatically without automatic reboot
+20. A target-local Uptime Kuma and Beszel profile provides functional checks,
+    high-level aggressively aggregated metrics, seven-day incident/log
+    retention, and configurable or disableable free paging within a bounded
+    resource budget; TrueNAS performs no telemetry compute
+21. GitLab loss freezes infrastructure mutation; nightly full-instance recovery
+    data and verified post-apply Git/state checkpoints restore the exact GitLab
+    version, critical applied commit, and Terraform lineage/serial before an
+    explicit automation unfreeze
+22. A blank replacement administrator laptop can reconstruct protected local
+    state from the password manager and a verified recovery bundle, audit the
+    target without mutation, then explicitly adopt it; normal recovery preserves
+    old credentials while a lost-or-compromised mode rotates them
 
 ---
 
@@ -76,7 +107,22 @@ at any machine, and idempotent.
 | Vault unseal | Manual Shamir shares | Keys written to `vault-init.json`; appropriate homelab tradeoff |
 | Config split | `config.yaml` (structural) + `.env` (secrets) | Structural config benefits from structure; secrets never in YAML files |
 | TLS | Cloudflare DNS-01 | No public exposure required; publicly trusted certs |
+| Certificate renewal | Host systemd timer; protected zone-scoped Cloudflare token | Independent of GitLab and Vault availability; validates deployment and rolls back failed consumers |
 | Secrets | HashiCorp Vault | Source of truth for all credentials and certs |
+| Host secret delivery | Protected local runtime copies in v1; Vault Agent optional later | Keeps initial single-host recovery understandable and does not put every service behind Vault unseal |
+| k3s secret delivery | Kubernetes auth + Vault Agent Injector | Uses ephemeral pod-local rendering and native workload lifecycle |
+| Workload identity | Defer SPIFFE/SPIRE | Revisit for multi-node workload identity or service mTLS; avoid a second v1 trust plane |
+| Resource ownership | Ansible owns host/runtime; Terraform owns durable API objects; Go orchestrates | One owner from first creation avoids imports and drift |
+| Terraform approval | Interactive plan approval; explicit `--approve-terraform` for headless mutation | Makes infrastructure changes reviewable without making CI ambiguous |
+| SSH host trust | Interactive trust-on-first-use with durable pinning; explicit changed-key recovery | Secure identity continuity without requiring manual `known_hosts` maintenance |
+| Network cutover | Homelab-first Technitium; opt-in MAAS DHCP; manual UniFi whole-home rollout | Limits the bootstrap failure domain while preserving the desired whole-home DNS end state |
+| Backup | Restic to a dedicated TrueNAS dataset; optional offline USB repository | Encrypted deduplicated snapshots, configurable retention, integrity checking, and recovery without GitLab |
+| Trial backup profile | Explicit `backup_enabled: false`; optional one-time controller export | Lets evaluators proceed without inventing a same-disk “backup”; durable warnings remain |
+| Reboot recovery | Core services use protected runtime copies; Vault starts sealed; reconcile after manual unseal | Preserves DNS/platform availability without automating custody of Shamir shares |
+| Upgrade policy | Review deadline then policy approval in a configurable maintenance window | Keeps normal human review while preventing indefinite version drift during administrator absence |
+| Observability | Target-local Uptime Kuma + Beszel; optional paging | Minimal functional alerts and high-level metrics without a full telemetry stack or NAS compute |
+| GitLab disaster recovery | Nightly full backup plus post-apply critical Git/state checkpoint | Breaks the GitLab/state circular dependency while keeping local Terraform break-glass-only |
+| Controller recovery | Portable encrypted bundle, read-only audit, then explicit adoption | Reconstructs a single-admin laptop without making it another source of truth or silently revoking valid access |
 | SSO | Authentik | OIDC for web services; group-based access control |
 
 ---
@@ -85,12 +131,12 @@ at any machine, and idempotent.
 
 | Service | Purpose | Healthy means | Key integrations |
 |---------|---------|---------------|-----------------|
-| **Technitium DNS** | Internal name resolution | All `*.home.<domain>` names resolve from lab VLAN | Terraform auto-creates records on service deploy |
+| **Technitium DNS** | Internal and eventual whole-home name resolution | Private and external queries resolve from the lab; selected UniFi networks can be migrated after bootstrap | Terraform auto-creates records; UniFi guide handles client rollout |
 | **HashiCorp Vault** | Secrets + cert distribution | Unsealed, reachable, Authentik SSO login works | All services pull secrets; certs stored here |
 | **Authentik** | SSO, group-based access control | OIDC login works for Vault, GitLab, Technitium, web UIs | Groups: `adults`, `kids` (extensible) |
 | **GitLab + Runner** | GitOps platform, Terraform state backend | MR merged → pipeline runs → service deployed | Vault secrets injection; Terraform HTTP backend |
 | **PostgreSQL** | Shared DB for services | All dependent services connected and healthy | GitLab, Authentik, MAAS |
-| **MAAS** | Bare metal provisioning, lab VLAN DHCP | New server PXE boots, gets OS, appears in inventory | Unifi routes VLAN; MAAS owns DHCP on lab segment |
+| **MAAS** | Bare metal provisioning; optional dedicated lab VLAN DHCP | API and images are healthy; when explicitly enabled, a test node PXE boots from the isolated lab VLAN | UniFi routes VLAN; MAAS DHCP defaults off and never shares authority |
 | **k3s clusters** | Named k8s infrastructure targets; Kubernetes handles internal scheduling | All defined clusters healthy, reachable as Terraform targets | MAAS provisions nodes; Ansible installs k3s; Terraform Helm provider deploys workloads |
 | **TLS / Cloudflare** | Publicly trusted certs via DNS-01 | Certs auto-issued and renewed | Vault stores and distributes certs |
 
@@ -103,11 +149,13 @@ Hard dependencies — do not reorder:
 1. **Config collection** — TUI or CLI gathers domain, Cloudflare token, passwords
 2. **DNS** — Technitium (internal name resolution for all subsequent services)
 3. **TLS** — Cloudflare DNS-01 cert issuance; certs stored in Vault
-4. **Vault** — Unsealed; `vault-init.json` written; Authentik OIDC configured
-5. **Authentik** — SSO operational; groups created; OIDC clients registered
-6. **PostgreSQL** — Shared instance; databases created per service
+4. **Vault** — Unsealed; `vault-init.json` written; OIDC auth mount prepared
+5. **PostgreSQL** — Shared instance; isolated databases and roles created per service
+6. **Authentik** — Starts directly on its final PostgreSQL database; SSO
+   operational; groups and OIDC clients registered
 7. **GitLab + Runner** — GitOps online; Terraform state backend configured; Vault integration active
-8. **MAAS** — Bare metal provisioning ready; lab VLAN DHCP active
+8. **MAAS** — Bare metal provisioning ready; lab VLAN DHCP remains disabled
+   unless the operator approves the isolated cutover
 9. **k3s clusters** — Each cluster defined as IaC; provisioned via MAAS → Ansible → registered as named Terraform target
 
 ---
@@ -124,7 +172,7 @@ target:
   values: ./values/ollama.yaml
 authentik: true
 allowed_groups: [adults]
-health_check: http                     # hook for future monitoring
+health_check: http                     # materialized as a Uptime Kuma monitor
 ```
 
 **Protocol-native service (k8s target, no SSO proxy):**
@@ -231,20 +279,29 @@ cluster or the service deployed to it.
   - `config.yaml` — non-sensitive structural config: domain, IPs, VLAN settings,
     cluster names, SSH key path, Vault share counts. Populated interactively on
     first run or pre-supplied. Safe to commit a template (`config.yaml.example`).
-  - `.env` — secrets only: Cloudflare API token, admin passwords, any initial
-    tokens. Never committed. Populated interactively on first run or pre-supplied
-    for headless/CI use. Loaded into the process environment; never written to
-    logs or `config.yaml`.
+  - `.env` — bootstrap secrets only: Cloudflare API token, admin passwords,
+    Restic passwords, paging destination credentials, and initial tokens. Never
+    committed. Populated interactively on first run or pre-supplied for
+    headless/CI use. Day-2 services read minimum protected mode `0600` runtime
+    files; values are never written to logs or `config.yaml`.
 - **Idempotency**: every stage checks preconditions before running; safe to re-run
-- **Output**: `vault-init.json` with unseal keys + root token (warning displayed)
+- **Output**: `vault-init.json` with unseal keys + root token at an
+  operator-selected path outside the repository (warning and backup guidance
+  displayed)
+- **Recovery defaults**: preserve `.env` and `~/.bootstrap` for safe re-runs;
+  removal is an explicit future cleanup action, never an automatic post-run step
 
 ---
 
 ## Network
 
 - **Lab VLAN**: dedicated, reserved IP range
-- **DHCP**: MAAS manages lab VLAN; Unifi manages all other VLANs
-- **Internal DNS**: `*.home.<domain>` via Technitium, resolving on lab VLAN only
+- **DHCP**: UniFi remains authoritative by default; MAAS DHCP is an explicit,
+  validated opt-in for only the dedicated lab VLAN
+- **Internal DNS**: `*.home.<domain>` via Technitium; initially homelab-scoped,
+  then advertised to selected home networks with the UniFi guide
+- **Whole-home end state**: Technitium handles client DNS for each migrated
+  UniFi network; rollout and rollback occur one network at a time
 - **External DNS**: Cloudflare — used only for DNS-01 validation, no public records
 
 ---
@@ -338,10 +395,20 @@ test-bootstrap:
 
 ---
 
-## Monitoring (planned, deferred — not v1)
+## Constrained Observability (v1)
 
-Uptime Kuma — lightweight, Authentik-compatible. `health_check` field included
-in service definition schema now so monitoring wires in without schema changes.
+Uptime Kuma supplies functional HTTP/TCP/DNS/push checks, incident history, and
+optional Discord, Telegram, ntfy, or generic-webhook paging. Beszel supplies
+high-level host, container, systemd, disk, network, temperature, and SMART
+metrics with aggressive aggregation. Both run on the target server within the
+configured resource budget; TrueNAS remains storage-only.
+
+Kuma and local logs retain seven days. Beszel retains one-minute data for one
+hour, then progressively aggregates to 10-minute, 20-minute, two-hour, and
+eight-hour records through 30 days. Paging thresholds and destinations are
+configurable, and dashboard-only mode is supported. A total target host, power,
+or outbound-network failure cannot page from the affected host. See
+[`docs/observability.md`](observability.md).
 
 ---
 
@@ -349,11 +416,9 @@ in service definition schema now so monitoring wires in without schema changes.
 
 - Proxmox VM lifecycle management
 - Multi-site or WAN replication
-- Automated alerting / notifications
 - Public-facing services
-- Backup / restore strategy
 - Multi-user GitLab (single admin for v1)
-- Monitoring dashboard (schema hook included; implementation deferred)
+- Prometheus, Grafana, Loki, distributed tracing, and centralized log ingestion
 
 ---
 

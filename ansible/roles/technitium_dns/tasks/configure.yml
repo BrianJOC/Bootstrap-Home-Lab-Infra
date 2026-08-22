@@ -21,19 +21,20 @@
 - name: Set Technitium API token fact
   ansible.builtin.set_fact:
     technitium_api_token: "{{ (technitium_login.content | from_json)['token'] }}"
-  # NOTE: no_log intentionally absent. Ansible-core 2.20 in role context breaks
-  # set_fact when accessing .json attributes of no_log uri task results (Python 3.14
-  # getattr vs __getitem__ issue). Token is short-lived and session-scoped.
+  no_log: true
 
 # Check if zone already exists
 - name: Check if DNS zone already exists
   ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/zones/list?token={{ technitium_api_token }}"
-    method: GET
+    url: "http://localhost:{{ technitium_port_http }}/api/zones/list"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_api_token }}"
     status_code: [200]
     return_content: true
   register: zone_list
-  # NOTE: no_log omitted — see set_fact note above. Token is in URL query param.
+  no_log: true
 
 - name: Set zone_exists fact
   ansible.builtin.set_fact:
@@ -57,12 +58,19 @@
 # Check existing DNS records and create missing ones
 - name: Check existing DNS records
   ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/zones/records/get?token={{ technitium_api_token }}&zone={{ internal_domain }}&domain={{ item.name }}.{{ internal_domain }}&type=A"
-    method: GET
+    url: "http://localhost:{{ technitium_port_http }}/api/zones/records/get"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      token: "{{ technitium_api_token }}"
+      zone: "{{ internal_domain }}"
+      domain: "{{ item.name }}.{{ internal_domain }}"
+      type: A
     status_code: [200]
     return_content: true
   register: dns_record_checks
   loop: "{{ technitium_dns_records }}"
+  no_log: true
 
 - name: Create A records for bootstrap services
   ansible.builtin.uri:

@@ -3,6 +3,7 @@ galaxy_info:
   role_name: tls_lego
   author: bootstrap-home-infra
   description: Deploy lego ACME client and issue wildcard TLS cert via Cloudflare DNS-01
+  license: MIT
   min_ansible_version: "2.14"
   platforms:
     - name: Ubuntu

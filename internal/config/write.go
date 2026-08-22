@@ -5,49 +5,50 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
 // WriteConfigYAML writes structural config fields (no secrets) to path atomically.
 // Uses temp file + rename. Mode 0600. Accepts explicit path for testability.
 func WriteConfigYAML(path string, cfg *Config) error {
-	lines := []string{
-		fmt.Sprintf("target_host: %q", cfg.TargetHost),
-		fmt.Sprintf("ssh_user: %q", cfg.SSHUser),
-		fmt.Sprintf("ssh_key_path: %q", cfg.SSHKeyPath),
-		fmt.Sprintf("internal_domain: %q", cfg.InternalDomain),
-		fmt.Sprintf("cloudflare_zone_id: %q", cfg.CloudflareZoneID),
-		fmt.Sprintf("bootstrap_server_ip: %q", cfg.BootstrapServerIP),
-		fmt.Sprintf("lab_vlan_subnet: %q", cfg.LabVLANSubnet),
-		fmt.Sprintf("lab_vlan_id: %d", cfg.LabVLANID),
-		fmt.Sprintf("admin_email: %q", cfg.AdminEmail),
-		fmt.Sprintf("vault_shares: %d", cfg.VaultShares),
-		fmt.Sprintf("vault_threshold: %d", cfg.VaultThreshold),
+	if cfg == nil {
+		return fmt.Errorf("config is nil")
 	}
-	if cfg.DataDisk != "" {
-		lines = append(lines, fmt.Sprintf("data_disk: %q", cfg.DataDisk))
-		if cfg.DataDiskMode != "" {
-			lines = append(lines, fmt.Sprintf("data_disk_mode: %q", cfg.DataDiskMode))
-		}
-		if cfg.DataDiskForceFormat {
-			lines = append(lines, fmt.Sprintf("data_disk_force_format: %v", cfg.DataDiskForceFormat))
-		}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshalling config: %w", err)
 	}
-	return atomicWrite(path, strings.Join(lines, "\n")+"\n")
+	return atomicWrite(path, string(data))
 }
 
 // WriteEnvFile writes secrets to path atomically (mode 0600).
 func WriteEnvFile(path string, sec *Secrets) error {
+	if sec == nil {
+		return fmt.Errorf("secrets are nil")
+	}
+	values := map[string]string{
+		"CF_DNS_API_TOKEN":             sec.CloudflareAPIToken,
+		"BOOTSTRAP_ADMIN_PASSWORD":     sec.AdminPassword,
+		"RESTIC_PRIMARY_PASSWORD":      sec.ResticPrimaryPassword,
+		"RESTIC_USB_PASSWORD":          sec.ResticUSBPassword,
+		"CONTROLLER_RECOVERY_PASSWORD": sec.ControllerRecoveryPassword,
+		"PAGING_DESTINATION_URL":       sec.PagingDestinationURL,
+	}
 	// Validate secrets before writing
-	for name, val := range map[string]string{
-		"CF_DNS_API_TOKEN":         sec.CloudflareAPIToken,
-		"BOOTSTRAP_ADMIN_PASSWORD": sec.AdminPassword,
-	} {
+	for name, val := range values {
 		if strings.ContainsAny(val, "\n\r") {
 			return fmt.Errorf("secret %q contains newline characters", name)
 		}
+		if val == "" {
+			delete(values, name)
+		}
 	}
-	content := fmt.Sprintf("CF_DNS_API_TOKEN=%s\nBOOTSTRAP_ADMIN_PASSWORD=%s\n",
-		sec.CloudflareAPIToken, sec.AdminPassword)
+	content, err := godotenv.Marshal(values)
+	if err != nil {
+		return fmt.Errorf("marshalling secrets: %w", err)
+	}
 	return atomicWrite(path, content)
 }
 

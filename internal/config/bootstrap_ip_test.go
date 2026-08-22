@@ -15,13 +15,13 @@ func TestDeriveBootstrapServerIP(t *testing.T) {
 		wantSkip   bool
 		wantEmpty  bool // true = result IP must be empty
 	}{
-		{"bare IPv4",         "192.168.1.100",       "192.168.1.100", true, false},
-		{"IPv4 with port",    "192.168.1.100:22",    "192.168.1.100", true, false},
-		{"IPv4 non-std port", "192.168.1.100:2222",  "192.168.1.100", true, false},
+		{"bare IPv4", "192.168.1.100", "192.168.1.100", true, false},
+		{"IPv4 with port", "192.168.1.100:22", "192.168.1.100", true, false},
+		{"IPv4 non-std port", "192.168.1.100:2222", "192.168.1.100", true, false},
 		// localhost resolves to either 127.0.0.1 or ::1 depending on OS /etc/hosts;
 		// we accept any loopback address, skip must be false.
 		{"resolvable hostname", "localhost", "", false, false},
-		{"unresolvable host",   "doesnotexist.invalid", "", false, true},
+		{"unresolvable host", "doesnotexist.invalid", "", false, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

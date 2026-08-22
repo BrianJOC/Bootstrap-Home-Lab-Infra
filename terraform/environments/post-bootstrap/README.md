@@ -58,20 +58,14 @@ just migrate-tf-state
 This runs `terraform init -migrate-state` in the bootstrap environment and prompts
 for confirmation before moving state.
 
-## Step 5 — Import Ansible-created GitLab resources
+## Step 5 — Verify
 
-The Ansible `gitlab_install` role creates the `infrastructure` group, `services` group,
-and `infrastructure/iac` project during bootstrap. Terraform must import these into
-state before it can manage them — otherwise the first `terraform apply` will fail with
-409 Conflict errors.
-
-```sh
-just tf-import-gitlab \
-  GITLAB_URL=https://gitlab.<domain> \
-  GITLAB_TOKEN=$TF_HTTP_PASSWORD
-```
-
-## Step 6 — Verify
+A clean bootstrap does not import GitLab resources. Terraform creates the
+`infrastructure` group, `services` group, and `infrastructure/iac` project while
+using local state, then migrates that already-tracked state to GitLab. If any
+Terraform-owned resource unexpectedly exists without state, stop and use the
+separate brownfield adoption workflow; do not add an automatic import to the
+clean-bootstrap path.
 
 ```sh
 cd terraform/environments/bootstrap
@@ -79,16 +73,17 @@ terraform state list   # all resources should appear
 terraform plan         # should show no changes (or only expected diffs)
 ```
 
-## Step 7 — Confirm GitLab holds the state
+## Step 6 — Confirm GitLab holds the state
 
 ```sh
 curl -sf -H "PRIVATE-TOKEN: $TF_HTTP_PASSWORD" \
   "https://gitlab.<domain>/api/v4/projects/<project-id>/terraform/state/homelab" | jq .serial
 ```
 
-If this returns a serial number, migration succeeded.
+Migration succeeds only when the returned state has the same lineage and serial
+as the local state used to initiate migration.
 
-## Step 8 — Remove local state files
+## Step 7 — Remove local state files
 
 Only after confirming migration:
 ```sh

@@ -1,0 +1,106 @@
+---
+- name: Assert supported k3s architecture
+  ansible.builtin.assert:
+    that:
+      - ansible_architecture in ['x86_64', 'aarch64']
+      - k3s_version is match('^v[0-9]+\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$')
+    fail_msg: "k3s requires x86_64/aarch64 and an explicitly pinned version."
+
+- name: Select k3s release architecture
+  ansible.builtin.set_fact:
+    k3s_release_arch: "{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}"
+    k3s_release_filename: "{{ 'k3s' if ansible_architecture == 'x86_64' else 'k3s-arm64' }}"
+
+- name: Download verified k3s binary
+  ansible.builtin.get_url:
+    url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/{{ k3s_release_filename }}"
+    dest: "/tmp/{{ k3s_release_filename }}"
+    checksum: "sha256:https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/sha256sum-{{ k3s_release_arch }}.txt"
+    mode: "0644"
+
+- name: Install verified k3s binary
+  ansible.builtin.copy:
+    src: "/tmp/{{ k3s_release_filename }}"
+    dest: /usr/local/bin/k3s
+    remote_src: true
+    mode: "0755"
+    owner: root
+    group: root
+  notify: restart k3s
+
+- name: Create k3s configuration directory
+  ansible.builtin.file:
+    path: "{{ k3s_config_dir }}"
+    state: directory
+    mode: "0700"
+    owner: root
+    group: root
+
+- name: Configure the initial k3s control plane
+  ansible.builtin.template:
+    src: config.yaml.j2
+    dest: "{{ k3s_config_dir }}/config.yaml"
+    mode: "0600"
+    owner: root
+    group: root
+  notify: restart k3s
+
+- name: Install k3s systemd service
+  ansible.builtin.template:
+    src: k3s.service.j2
+    dest: /etc/systemd/system/k3s.service
+    mode: "0644"
+  notify: restart k3s
+
+- name: Enable and start k3s
+  ansible.builtin.systemd:
+    name: k3s
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Flush k3s restart handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the Kubernetes API
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s kubectl get --raw=/readyz
+  register: k3s_ready
+  changed_when: false
+  retries: 24
+  delay: 5
+  until: k3s_ready.rc == 0 and k3s_ready.stdout == "ok"
+
+- name: Wait for every installed node to report Ready
+  ansible.builtin.command:
+    cmd: /usr/local/bin/k3s kubectl wait --for=condition=Ready nodes --all --timeout=120s
+  changed_when: false
+
+- name: Create protected controller kubeconfig directory
+  ansible.builtin.file:
+    path: "{{ k3s_controller_kubeconfig_dir }}"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
+- name: Fetch protected kubeconfig to the controller
+  ansible.builtin.fetch:
+    src: "{{ k3s_config_dir }}/k3s.yaml"
+    dest: "{{ k3s_controller_kubeconfig_dir }}/{{ k3s_cluster_name }}.yaml"
+    flat: true
+  no_log: true
+
+- name: Restrict controller kubeconfig permissions
+  ansible.builtin.file:
+    path: "{{ k3s_controller_kubeconfig_dir }}/{{ k3s_cluster_name }}.yaml"
+    state: file
+    mode: "0600"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false

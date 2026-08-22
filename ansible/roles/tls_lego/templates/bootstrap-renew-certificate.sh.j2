@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec 9>/run/lock/bootstrap-certificate-renew.lock
+flock -n 9 || exit 0
+
+domain={{ internal_domain | quote }}
+cert_root={{ cert_dir | quote }}
+active_cert="$cert_root/certificates/_.$domain.crt"
+active_key="$cert_root/certificates/_.$domain.key"
+state_root=/var/lib/bootstrap-home-infra
+mkdir -p "$state_root"
+
+if openssl x509 -checkend "$(({{ certificate_renew_before_days | int }} * 86400))" -noout -in "$active_cert"; then
+  openssl x509 -enddate -noout -in "$active_cert" > "$state_root/certificate-status"
+  exit 0
+fi
+
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+mkdir -p "$stage/acme"
+cp -a "$cert_root/accounts" "$stage/acme/" 2>/dev/null || true
+cp -aL "$cert_root/certificates" "$stage/acme/certificates"
+
+export CLOUDFLARE_DNS_API_TOKEN_FILE=/etc/bootstrap-home-infra/cloudflare-dns-token
+{{ lego_install_dir }}/lego \
+  --accept-tos \
+  --email={{ admin_email | quote }} \
+  --domains="*.$domain" \
+  --domains="$domain" \
+  --dns={{ lego_dns_provider | quote }} \
+  --dns.disable-cp \
+  --server={{ acme_server_url | quote }} \
+  --path="$stage/acme" \
+  renew --days={{ certificate_renew_before_days | int }}
+unset CLOUDFLARE_DNS_API_TOKEN_FILE
+
+candidate_cert="$stage/acme/certificates/_.$domain.crt"
+candidate_key="$stage/acme/certificates/_.$domain.key"
+openssl x509 -noout -in "$candidate_cert"
+openssl x509 -checkhost "$domain" -noout -in "$candidate_cert"
+openssl x509 -checkhost "renewal-probe.$domain" -noout -in "$candidate_cert"
+cert_pub="$(openssl x509 -pubkey -noout -in "$candidate_cert" | openssl sha256)"
+key_pub="$(openssl pkey -pubout -in "$candidate_key" | openssl sha256)"
+test "$cert_pub" = "$key_pub"
+openssl x509 -checkend "$(({{ certificate_renew_before_days | int }} * 86400))" -noout -in "$candidate_cert"
+
+version="$(date -u +%Y%m%dT%H%M%SZ)"
+version_dir="$cert_root/$domain/versions/$version"
+install -d -m 0700 "$version_dir"
+cp -a "$stage/acme/certificates" "$version_dir/"
+chmod 0600 "$version_dir/certificates/_.$domain.key"
+
+old_target="$(readlink "$cert_root/$domain/current")"
+ln -s "versions/$version" "$cert_root/$domain/current.next"
+mv -Tf "$cert_root/$domain/current.next" "$cert_root/$domain/current"
+
+rollback() {
+  ln -s "$old_target" "$cert_root/$domain/current.rollback"
+  mv -Tf "$cert_root/$domain/current.rollback" "$cert_root/$domain/current"
+  systemctl reload vault 2>/dev/null || true
+  gitlab-ctl hup nginx 2>/dev/null || true
+}
+trap rollback ERR
+
+systemctl reload vault 2>/dev/null || true
+gitlab-ctl hup nginx 2>/dev/null || true
+if systemctl is-active --quiet vault; then
+  curl --silent --show-error "https://vault.$domain:8200/v1/sys/health" >/dev/null
+fi
+if command -v gitlab-ctl >/dev/null; then
+  gitlab-rake gitlab:check SANITIZE=true >/dev/null
+fi
+
+trap - ERR
+openssl x509 -fingerprint -sha256 -enddate -noout -in "$active_cert" > "$state_root/certificate-status"
+touch "$state_root/certificate-vault-sync-pending"

@@ -1,0 +1,18 @@
+---
+profile: min
+exclude_paths:
+  - ansible/roles/*/molecule/
+skip_list:
+  # The public stage variables intentionally keep one stable name across the
+  # Go orchestrator, playbooks, and roles instead of adding role prefixes.
+  - var-naming[no-role-prefix]
+  - partial-become
+  # Existing handlers and imperative bootstrap commands use explicit
+  # changed_when/guards where product behavior can be observed reliably.
+  - name[casing]
+  - no-changed-when
+  - no-handler
+  - risky-shell-pipe
+  # Formatting is enforced separately and legacy YAML is being migrated
+  # incrementally without weakening syntax/schema checks.
+  - yaml

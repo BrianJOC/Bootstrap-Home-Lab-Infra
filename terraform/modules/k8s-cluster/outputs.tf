@@ -1,11 +1,16 @@
 output "cluster_name" {
   description = "Name of the k3s cluster"
-  value       = var.cluster_name
+  value       = terraform_data.cluster_registration.output.name
 }
 
-output "kubeconfig_command" {
-  description = "SSH command to retrieve the kubeconfig from the first control-plane node"
-  value       = "ssh ${var.ssh_user}@${local.control_planes[0].address} 'sudo cat /etc/rancher/k3s/k3s.yaml'"
+output "endpoint" {
+  description = "Verified Kubernetes API endpoint"
+  value       = terraform_data.cluster_registration.output.endpoint
+}
+
+output "kubeconfig_vault_path" {
+  description = "Vault path for the cluster kubeconfig"
+  value       = terraform_data.cluster_registration.output.kubeconfig_vault_path
 }
 
 output "control_plane_addresses" {

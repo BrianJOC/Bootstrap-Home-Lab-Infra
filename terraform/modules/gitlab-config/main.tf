@@ -73,11 +73,12 @@ resource "gitlab_project_variable" "vault_role" {
 
 # ── GitLab CI Pipeline Configuration ─────────────────────────────────────────
 
-resource "gitlab_project_file" "ci_config" {
+resource "gitlab_repository_file" "ci_config" {
   project        = gitlab_project.iac.id
   file_path      = ".gitlab-ci.yml"
   branch         = "main"
   content        = base64encode(file("${path.module}/templates/gitlab-ci.yml"))
+  encoding       = "base64"
   commit_message = "ci: add bootstrap pipeline configuration"
   author_name    = "bootstrap"
   author_email   = "bootstrap@${var.internal_domain}"
@@ -85,18 +86,56 @@ resource "gitlab_project_file" "ci_config" {
 
 # ── Terraform backend example (committed to repo) ─────────────────────────────
 
-resource "gitlab_project_file" "backend_example" {
-  project        = gitlab_project.iac.id
-  file_path      = "terraform/backend.tf.example"
-  branch         = "main"
-  content        = base64encode(templatefile("${path.module}/templates/backend.tf.example.tpl", {
-    gitlab_url  = var.gitlab_url
-    project_id  = gitlab_project.iac.id
-    domain      = var.internal_domain
+resource "gitlab_repository_file" "backend_example" {
+  project   = gitlab_project.iac.id
+  file_path = "terraform/backend.tf.example"
+  branch    = "main"
+  content = base64encode(templatefile("${path.module}/templates/backend.tf.example.tpl", {
+    gitlab_url = var.gitlab_url
+    project_id = gitlab_project.iac.id
+    domain     = var.internal_domain
   }))
+  encoding       = "base64"
   commit_message = "docs: add Terraform HTTP backend example"
   author_name    = "bootstrap"
   author_email   = "bootstrap@${var.internal_domain}"
 
-  depends_on = [gitlab_project_file.ci_config]
+  depends_on = [gitlab_repository_file.ci_config]
+}
+
+resource "gitlab_repository_file" "terraform_versions" {
+  project        = gitlab_project.iac.id
+  file_path      = "terraform/versions.tf"
+  branch         = "main"
+  content        = base64encode(file("${path.module}/templates/versions.tf"))
+  encoding       = "base64"
+  commit_message = "build: add the GitLab HTTP state root"
+  author_name    = "bootstrap"
+  author_email   = "bootstrap@${var.internal_domain}"
+
+  depends_on = [gitlab_repository_file.backend_example]
+}
+
+resource "gitlab_repository_file" "cluster_directory" {
+  project        = gitlab_project.iac.id
+  file_path      = "infrastructure/clusters/.gitkeep"
+  branch         = "main"
+  content        = ""
+  commit_message = "chore: add cluster definition directory"
+  author_name    = "bootstrap"
+  author_email   = "bootstrap@${var.internal_domain}"
+
+  depends_on = [gitlab_repository_file.terraform_versions]
+}
+
+resource "gitlab_repository_file" "node_directory" {
+  project        = gitlab_project.iac.id
+  file_path      = "infrastructure/nodes/.gitkeep"
+  branch         = "main"
+  content        = ""
+  commit_message = "chore: add node definition directory"
+  author_name    = "bootstrap"
+  author_email   = "bootstrap@${var.internal_domain}"
+
+  depends_on = [gitlab_repository_file.cluster_directory]
 }

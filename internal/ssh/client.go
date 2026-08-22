@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 )
 
 // ErrAuthFailed is returned when the SSH server rejects the key.
@@ -29,13 +30,15 @@ const (
 
 // Client manages a persistent SSH connection to a target host.
 type Client struct {
-	host   string
-	user   string
-	client *ssh.Client
+	host           string
+	user           string
+	keyPath        string
+	knownHostsPath string
+	client         *ssh.Client
 }
 
 // New creates a new SSH client using key-based authentication only.
-func New(host, user, keyPath string) (*Client, error) {
+func New(host, user, keyPath, knownHostsPath string) (*Client, error) {
 	keyData, err := os.ReadFile(keyPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading SSH key: %w", err)
@@ -46,15 +49,17 @@ func New(host, user, keyPath string) (*Client, error) {
 		return nil, fmt.Errorf("parsing SSH private key: %w", err)
 	}
 
+	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("loading SSH trust store: %w", err)
+	}
+
 	cfg := &ssh.ClientConfig{
 		User: user,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		// InsecureIgnoreHostKey is intentional for bootstrap: the target host may
-		// not have a known-hosts entry yet. Operators should verify the target's
-		// SSH fingerprint out-of-band. This is logged at connection time.
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         defaultDialTimeout,
 	}
 
@@ -70,11 +75,18 @@ func New(host, user, keyPath string) (*Client, error) {
 	}
 
 	return &Client{
-		host:   host,
-		user:   user,
-		client: client,
+		host:           host,
+		user:           user,
+		keyPath:        keyPath,
+		knownHostsPath: knownHostsPath,
+		client:         client,
 	}, nil
 }
+
+func (c *Client) Host() string           { return c.host }
+func (c *Client) User() string           { return c.user }
+func (c *Client) KeyPath() string        { return c.keyPath }
+func (c *Client) KnownHostsPath() string { return c.knownHostsPath }
 
 // Run executes a command on the remote host with the default 5-minute timeout.
 // Returns stdout, stderr, and any error.
@@ -109,6 +121,46 @@ func (c *Client) RunWithTimeout(cmd string, timeout time.Duration) (stdout, stde
 		session.Close() //nolint:errcheck
 		return outBuf.String(), errBuf.String(), fmt.Errorf("command timed out after %s", timeout)
 	}
+}
+
+// WriteFile streams protected content over the existing authenticated SSH
+// session without placing it in a command argument or temporary controller
+// file. The destination is atomically replaced.
+func (c *Client) WriteFile(path string, content []byte, mode os.FileMode) error {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("creating SSH upload session: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdin = bytes.NewReader(content)
+	command := fmt.Sprintf(
+		"set -e; destination=%q; temporary=\"${destination}.tmp.$$\"; umask 077; cat > \"$temporary\"; chmod %04o \"$temporary\"; mv -f \"$temporary\" \"$destination\"",
+		path,
+		mode.Perm(),
+	)
+	if output, err := session.CombinedOutput(command); err != nil {
+		return fmt.Errorf("uploading protected file: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// RunWithStdin executes a remote command while streaming sensitive input over
+// the SSH channel rather than embedding it in the remote command line.
+func (c *Client) RunWithStdin(command string, input []byte) (stdout, stderr string, err error) {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return "", "", fmt.Errorf("creating SSH stdin session: %w", err)
+	}
+	defer session.Close()
+	session.Stdin = bytes.NewReader(input)
+	var stdoutBuffer, stderrBuffer bytes.Buffer
+	session.Stdout = &stdoutBuffer
+	session.Stderr = &stderrBuffer
+	if err := session.Run(command); err != nil {
+		return stdoutBuffer.String(), stderrBuffer.String(), err
+	}
+	return stdoutBuffer.String(), stderrBuffer.String(), nil
 }
 
 // Close closes the underlying SSH connection.

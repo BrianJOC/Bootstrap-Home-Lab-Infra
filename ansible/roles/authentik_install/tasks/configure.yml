@@ -108,3 +108,113 @@
     - gitlab_oidc_check.json.count is defined
     - gitlab_oidc_check.json.count == 0
   no_log: true
+
+- name: Read the effective GitLab OIDC provider
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=gitlab"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+  register: gitlab_oidc_effective
+  no_log: true
+  when: authentik_bootstrap_token != ""
+
+- name: Persist the GitLab OIDC client secret on the controller
+  ansible.builtin.copy:
+    content: "{{ gitlab_oidc_effective.json.results[0].client_secret }}"
+    dest: "{{ lookup('env', 'HOME') }}/.bootstrap/oidc-gitlab-secret"
+    mode: "0600"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+  no_log: true
+  when:
+    - gitlab_oidc_effective.json.results is defined
+    - gitlab_oidc_effective.json.results | length == 1
+
+- name: Check whether the GitLab Authentik application exists
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/?slug=gitlab"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+  register: gitlab_application_check
+  no_log: true
+  when: authentik_bootstrap_token != ""
+
+- name: Create the GitLab Authentik application
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      name: GitLab
+      slug: gitlab
+      provider: "{{ gitlab_oidc_effective.json.results[0].pk }}"
+    status_code: [201]
+  no_log: true
+  when:
+    - gitlab_application_check.json.results is defined
+    - gitlab_application_check.json.results | length == 0
+
+- name: Read the effective Vault OIDC provider
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=vault"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+  register: vault_oidc_effective
+  no_log: true
+  when: authentik_bootstrap_token != ""
+
+- name: Persist the Vault OIDC client secret on the controller
+  ansible.builtin.copy:
+    content: "{{ vault_oidc_effective.json.results[0].client_secret }}"
+    dest: "{{ lookup('env', 'HOME') }}/.bootstrap/oidc-vault-secret"
+    mode: "0600"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+  no_log: true
+  when:
+    - vault_oidc_effective.json.results is defined
+    - vault_oidc_effective.json.results | length == 1
+
+- name: Check whether the Vault Authentik application exists
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/?slug=vault"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+    status_code: [200]
+  register: vault_application_check
+  no_log: true
+  when: authentik_bootstrap_token != ""
+
+- name: Create the Vault Authentik application
+  ansible.builtin.uri:
+    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ authentik_bootstrap_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      name: Vault
+      slug: vault
+      provider: "{{ vault_oidc_effective.json.results[0].pk }}"
+    status_code: [201]
+  no_log: true
+  when:
+    - vault_application_check.json.results is defined
+    - vault_application_check.json.results | length == 0

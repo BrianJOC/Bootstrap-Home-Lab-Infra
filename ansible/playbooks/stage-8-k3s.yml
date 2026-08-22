@@ -1,0 +1,6 @@
+---
+- name: Stage 8 — k3s
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - k3s_install

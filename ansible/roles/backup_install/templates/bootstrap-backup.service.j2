@@ -1,0 +1,15 @@
+[Unit]
+Description=Application-consistent homelab backup
+After=network-online.target postgresql.service
+Wants=network-online.target
+ConditionPathExists=/etc/bootstrap-home-infra/backup/primary.env
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/bootstrap-home-infra/backup/primary.env
+ExecStart=/usr/local/sbin/bootstrap-backup
+PrivateTmp=yes
+ProtectHome=yes
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

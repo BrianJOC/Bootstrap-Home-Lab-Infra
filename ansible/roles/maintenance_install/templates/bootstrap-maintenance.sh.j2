@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+exec 9>/run/lock/bootstrap-maintenance.lock
+flock -n 9 || exit 0
+
+queue=/etc/bootstrap-home-infra/upgrade-proposals
+hooks=/usr/local/lib/bootstrap-home-infra/upgrade-hooks
+state=/var/lib/bootstrap-home-infra/upgrades
+mkdir -p "$state"
+
+if [ -e /var/lib/bootstrap-home-infra/incident-active ]; then
+  printf '%s\n' "blocked: active incident" > "$state/last-result"
+  exit 0
+fi
+
+for proposal in "$queue"/*.json; do
+  [ -e "$proposal" ] || continue
+  jq -e '
+    (.id | type == "string") and
+    (.deadline_epoch | type == "number") and
+    (.hook | type == "string") and
+    (.class | IN("critical-security", "security", "patch-minor", "major")) and
+    (.requires_backup | type == "boolean")
+  ' "$proposal" >/dev/null
+
+  id="$(jq -r .id "$proposal")"
+  hook="$(jq -r .hook "$proposal")"
+  deadline="$(jq -r .deadline_epoch "$proposal")"
+  requires_backup="$(jq -r .requires_backup "$proposal")"
+  case "$id:$hook" in
+    *[!a-zA-Z0-9_.:-]*) printf '%s\n' "blocked: invalid proposal name" > "$state/$id"; continue ;;
+  esac
+
+  approved="$(jq -r '.approved // false' "$proposal")"
+  approval=manual
+  if [ "$approved" != true ]; then
+    if [ "$(date +%s)" -lt "$deadline" ]; then
+      continue
+    fi
+    approval=approved-by-policy
+  fi
+
+  if [ "$requires_backup" = true ]; then
+    if ! grep -q 'complete=true' /var/lib/bootstrap-home-infra/backup-status 2>/dev/null; then
+      printf '%s\n' "blocked: verified backup required" > "$state/$id"
+      continue
+    fi
+  fi
+  if [ -e /var/run/reboot-required ]; then
+    printf '%s\n' "blocked: host reboot is already required" > "$state/$id"
+    continue
+  fi
+
+  hook_path="$hooks/$hook"
+  [ -f "$hook_path" ] || { printf '%s\n' "blocked: hook missing" > "$state/$id"; continue; }
+  [ "$(stat -c %u "$hook_path")" = 0 ] || { printf '%s\n' "blocked: hook owner" > "$state/$id"; continue; }
+  [ "$(stat -c %a "$hook_path")" = 700 ] || { printf '%s\n' "blocked: hook mode" > "$state/$id"; continue; }
+
+  printf 'running approval=%s started=%s\n' "$approval" "$(date -u +%FT%TZ)" > "$state/$id"
+  "$hook_path"
+  mv "$proposal" "$proposal.applied"
+  printf 'complete approval=%s finished=%s\n' "$approval" "$(date -u +%FT%TZ)" > "$state/$id"
+done
+
+if [ -e /var/run/reboot-required ]; then
+  stat -c %Y /var/run/reboot-required > /var/lib/bootstrap-home-infra/reboot-required-since
+else
+  rm -f /var/lib/bootstrap-home-infra/reboot-required-since
+fi
+date -u +%FT%TZ > "$state/last-run"

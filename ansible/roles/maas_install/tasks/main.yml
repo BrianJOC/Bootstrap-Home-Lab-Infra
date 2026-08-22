@@ -19,6 +19,34 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   become: false
 
+- name: Validate the opt-in MAAS DHCP boundary
+  ansible.builtin.assert:
+    that:
+      - lab_vlan_interface | length > 0
+      - dhcp_range_low | length > 0
+      - dhcp_range_high | length > 0
+    fail_msg: "MAAS DHCP requires one explicit interface and dynamic range."
+  when: maas_dhcp_enabled | bool
+
+- name: Confirm the selected lab interface exists
+  ansible.builtin.command:
+    cmd: "ip link show dev {{ lab_vlan_interface }}"
+  changed_when: false
+  when: maas_dhcp_enabled | bool
+
+- name: Confirm the lab gateway is reachable before any Terraform cutover
+  ansible.builtin.command:
+    cmd: "ping -c 1 -W 2 {{ lab_gateway }}"
+  changed_when: false
+  when: maas_dhcp_enabled | bool
+
+- name: Record that Ansible does not mutate DHCP ownership
+  ansible.builtin.debug:
+    msg: >-
+      MAAS DHCP preflight passed for {{ lab_vlan_subnet }} on
+      {{ lab_vlan_interface }}. Terraform owns any later MAAS API cutover.
+  when: maas_dhcp_enabled | bool
+
 # Idempotency gate: check if MAAS snap is already installed
 - name: Check if MAAS snap is installed
   ansible.builtin.command: snap list maas

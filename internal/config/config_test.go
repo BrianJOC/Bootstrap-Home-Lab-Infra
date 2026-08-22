@@ -1,15 +1,12 @@
 package config
 
 import (
-<<<<<<< HEAD
 	"os"
-=======
->>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
-<<<<<<< HEAD
 // validRunConfig returns a RunConfig with all required fields populated.
 func validRunConfig() *RunConfig {
 	return &RunConfig{
@@ -17,10 +14,11 @@ func validRunConfig() *RunConfig {
 			TargetHost:          "192.168.1.100",
 			SSHUser:             "ubuntu",
 			SSHKeyPath:          "/home/user/.ssh/id_ed25519",
-			InternalDomain:      "home.lab",
+			InternalDomain:      "home.example.com",
 			CloudflareZoneID:    "abc123zone",
 			BootstrapServerIP:   "192.168.1.100",
 			LabVLANSubnet:       "10.0.0.0/24",
+			LabGateway:          "10.0.0.1",
 			AdminEmail:          "admin@example.com",
 			VaultInitOutputPath: "/tmp/vault-init.json",
 			VaultShares:         5,
@@ -29,32 +27,9 @@ func validRunConfig() *RunConfig {
 		Secrets: &Secrets{
 			CloudflareAPIToken: "cf-token-value",
 			AdminPassword:      "s3cr3tpassword",
-=======
-// validRunConfig returns a fully populated *RunConfig that passes Validate.
-func validRunConfig() *RunConfig {
-	return &RunConfig{
-		Config: &Config{
-			TargetHost:        "192.168.1.10",
-			SSHUser:           "ubuntu",
-			SSHKeyPath:        "/home/user/.ssh/id_ed25519",
-			InternalDomain:    "lab.example.com",
-			CloudflareZoneID:  "abc123",
-			BootstrapServerIP: "192.168.1.1",
-			LabVLANSubnet:     "192.168.1.0/24",
-			AdminEmail:        "admin@example.com",
-			VaultShares:       5,
-			VaultThreshold:    3,
-		},
-		Secrets: &Secrets{
-			CloudflareAPIToken: "cf-token",
-			AdminPassword:      "secret-password",
->>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)
 		},
 	}
 }
-
-<<<<<<< HEAD
-// ── Validate ──────────────────────────────────────────────────────────────────
 
 func TestValidate_Valid(t *testing.T) {
 	if err := Validate(validRunConfig()); err != nil {
@@ -68,66 +43,18 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 		mutate func(*RunConfig)
 		substr string
 	}{
-		{
-			name:   "missing target_host",
-			mutate: func(rc *RunConfig) { rc.TargetHost = "" },
-			substr: "target_host",
-		},
-		{
-			name:   "missing ssh_user",
-			mutate: func(rc *RunConfig) { rc.SSHUser = "" },
-			substr: "ssh_user",
-		},
-		{
-			name:   "missing ssh_key_path",
-			mutate: func(rc *RunConfig) { rc.SSHKeyPath = "" },
-			substr: "ssh_key_path",
-		},
-		{
-			name:   "missing internal_domain",
-			mutate: func(rc *RunConfig) { rc.InternalDomain = "" },
-			substr: "internal_domain",
-		},
-		{
-			name:   "missing cloudflare_zone_id",
-			mutate: func(rc *RunConfig) { rc.CloudflareZoneID = "" },
-			substr: "cloudflare_zone_id",
-		},
-		{
-			name:   "missing bootstrap_server_ip",
-			mutate: func(rc *RunConfig) { rc.BootstrapServerIP = "" },
-			substr: "bootstrap_server_ip",
-		},
-		{
-			name:   "missing lab_vlan_subnet",
-			mutate: func(rc *RunConfig) { rc.LabVLANSubnet = "" },
-			substr: "lab_vlan_subnet",
-		},
-		{
-			name:   "missing admin_email",
-			mutate: func(rc *RunConfig) { rc.AdminEmail = "" },
-			substr: "admin_email",
-		},
-		{
-			name:   "missing vault_init_output_path",
-			mutate: func(rc *RunConfig) { rc.VaultInitOutputPath = "" },
-			substr: "vault_init_output_path",
-		},
-		{
-			name:   "missing CF_DNS_API_TOKEN",
-			mutate: func(rc *RunConfig) { rc.Secrets.CloudflareAPIToken = "" },
-			substr: "CF_DNS_API_TOKEN",
-		},
-		{
-			name:   "missing BOOTSTRAP_ADMIN_PASSWORD",
-			mutate: func(rc *RunConfig) { rc.Secrets.AdminPassword = "" },
-			substr: "BOOTSTRAP_ADMIN_PASSWORD",
-		},
-		{
-			name:   "whitespace-only target_host",
-			mutate: func(rc *RunConfig) { rc.TargetHost = "   " },
-			substr: "target_host",
-		},
+		{"missing target_host", func(rc *RunConfig) { rc.TargetHost = "" }, "target_host"},
+		{"missing ssh_user", func(rc *RunConfig) { rc.SSHUser = "" }, "ssh_user"},
+		{"missing ssh_key_path", func(rc *RunConfig) { rc.SSHKeyPath = "" }, "ssh_key_path"},
+		{"missing internal_domain", func(rc *RunConfig) { rc.InternalDomain = "" }, "internal_domain"},
+		{"missing cloudflare_zone_id", func(rc *RunConfig) { rc.CloudflareZoneID = "" }, "cloudflare_zone_id"},
+		{"missing bootstrap_server_ip", func(rc *RunConfig) { rc.BootstrapServerIP = "" }, "bootstrap_server_ip"},
+		{"missing lab_vlan_subnet", func(rc *RunConfig) { rc.LabVLANSubnet = "" }, "lab_vlan_subnet"},
+		{"missing admin_email", func(rc *RunConfig) { rc.AdminEmail = "" }, "admin_email"},
+		{"missing vault_init_output_path", func(rc *RunConfig) { rc.VaultInitOutputPath = "" }, "vault_init_output_path"},
+		{"missing CF_DNS_API_TOKEN", func(rc *RunConfig) { rc.Secrets.CloudflareAPIToken = "" }, "CF_DNS_API_TOKEN"},
+		{"missing BOOTSTRAP_ADMIN_PASSWORD", func(rc *RunConfig) { rc.Secrets.AdminPassword = "" }, "BOOTSTRAP_ADMIN_PASSWORD"},
+		{"whitespace-only target_host", func(rc *RunConfig) { rc.TargetHost = "   " }, "target_host"},
 	}
 
 	for _, tc := range cases {
@@ -140,38 +67,102 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.substr) {
 				t.Errorf("error %q does not contain %q", err.Error(), tc.substr)
-=======
-// ── DataPath ──────────────────────────────────────────────────────────────────
-
-func TestDataPath_NoDisk(t *testing.T) {
-	c := &Config{}
-	if got := c.DataPath(); got != "" {
-		t.Errorf("DataPath() with no disk = %q, want empty string", got)
+			}
+		})
 	}
 }
 
-func TestDataPath_FullMode(t *testing.T) {
-	c := &Config{DataDisk: "/dev/sda", DataDiskMode: "full"}
-	if got := c.DataPath(); got != "/data" {
-		t.Errorf("DataPath() full mode = %q, want /data", got)
+func TestValidate_InternalDomain(t *testing.T) {
+	invalid := []string{
+		"UPPERCASE.lab",
+		"has space.lab",
+		"has;semicolon.lab",
+		"has$(injection).lab",
+		"noext",
+		".leading-dot.lab",
+		"trailing-dot.lab.",
+	}
+	for _, domain := range invalid {
+		t.Run("invalid_"+domain, func(t *testing.T) {
+			rc := validRunConfig()
+			rc.InternalDomain = domain
+			if err := Validate(rc); err == nil {
+				t.Errorf("expected error for invalid domain %q", domain)
+			}
+		})
+	}
+
+	valid := []string{"home.lab", "my-homelab.internal", "home.example.com", "a.b.c"}
+	for _, domain := range valid {
+		t.Run("valid_"+domain, func(t *testing.T) {
+			rc := validRunConfig()
+			rc.InternalDomain = domain
+			if err := Validate(rc); err != nil {
+				t.Errorf("unexpected error for valid domain %q: %v", domain, err)
+			}
+		})
 	}
 }
 
-func TestDataPath_ModeUnset_DefaultsFull(t *testing.T) {
-	c := &Config{DataDisk: "/dev/sda"}
-	if got := c.DataPath(); got != "/data" {
-		t.Errorf("DataPath() with mode unset = %q, want /data", got)
-	}
+func TestValidate_NetworkAndVault(t *testing.T) {
+	t.Run("invalid bootstrap IP", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.BootstrapServerIP = "not-an-ip"
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "bootstrap_server_ip") {
+			t.Errorf("expected bootstrap_server_ip error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid VLAN CIDR", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.LabVLANSubnet = "10.0.0.0/99"
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "lab_vlan_subnet") {
+			t.Errorf("expected lab_vlan_subnet error, got: %v", err)
+		}
+	})
+
+	t.Run("threshold exceeds shares", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.VaultShares = 3
+		rc.VaultThreshold = 4
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "vault_threshold") {
+			t.Errorf("expected vault_threshold error, got: %v", err)
+		}
+	})
+
+	t.Run("too few shares", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.VaultShares = 2
+		rc.VaultThreshold = 2
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "vault_shares") {
+			t.Errorf("expected vault_shares error, got: %v", err)
+		}
+	})
 }
 
-func TestDataPath_MountOnlyMode(t *testing.T) {
-	c := &Config{DataDisk: "/dev/sda", DataDiskMode: "mount_only"}
-	if got := c.DataPath(); got != "" {
-		t.Errorf("DataPath() mount_only = %q, want empty string", got)
+func TestDataPath(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{"no disk", Config{}, ""},
+		{"full mode", Config{DataDisk: "/dev/sda", DataDiskMode: "full"}, "/data"},
+		{"unset mode defaults full", Config{DataDisk: "/dev/sda"}, "/data"},
+		{"mount only", Config{DataDisk: "/dev/sda", DataDiskMode: "mount_only"}, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.DataPath(); got != tc.want {
+				t.Errorf("DataPath() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
-
-// ── Validate: data_disk ───────────────────────────────────────────────────────
 
 func TestValidate_DataDisk(t *testing.T) {
 	cases := []struct {
@@ -181,46 +172,14 @@ func TestValidate_DataDisk(t *testing.T) {
 		wantError bool
 		substr    string
 	}{
-		{
-			name: "valid sda",
-			disk: "/dev/sda", mode: "full",
-			wantError: false,
-		},
-		{
-			name: "valid nvme",
-			disk: "/dev/nvme0n1", mode: "full",
-			wantError: false,
-		},
-		{
-			name: "valid mmcblk",
-			disk: "/dev/mmcblk1", mode: "full",
-			wantError: false,
-		},
-		{
-			name: "valid virtio (QEMU)",
-			disk: "/dev/vdb", mode: "full",
-			wantError: false,
-		},
-		{
-			name:      "invalid path",
-			disk:      "/tmp/notadisk", mode: "full",
-			wantError: true, substr: "data_disk",
-		},
-		{
-			name:      "mode without disk",
-			disk:      "", mode: "full",
-			wantError: true, substr: "data_disk_mode",
-		},
-		{
-			name:      "invalid mode value",
-			disk:      "/dev/sda", mode: "wiped",
-			wantError: true, substr: "data_disk_mode",
-		},
-		{
-			name:      "empty disk and empty mode — valid SD-only",
-			disk:      "", mode: "",
-			wantError: false,
-		},
+		{"valid sda", "/dev/sda", "full", false, ""},
+		{"valid nvme", "/dev/nvme0n1", "full", false, ""},
+		{"valid mmcblk", "/dev/mmcblk1", "full", false, ""},
+		{"valid virtio", "/dev/vdb", "full", false, ""},
+		{"invalid path", "/tmp/notadisk", "full", true, "data_disk"},
+		{"mode without disk", "", "full", true, "data_disk_mode"},
+		{"invalid mode", "/dev/sda", "wiped", true, "data_disk_mode"},
+		{"no secondary disk", "", "", false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -235,96 +194,14 @@ func TestValidate_DataDisk(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.substr) {
 					t.Errorf("error %q does not contain %q", err.Error(), tc.substr)
 				}
-			} else {
-				if err != nil {
-					t.Errorf("unexpected error: %v", err)
-				}
->>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
 			}
 		})
 	}
 }
-<<<<<<< HEAD
-
-func TestValidate_InvalidInternalDomain(t *testing.T) {
-	cases := []string{
-		"UPPERCASE.lab",
-		"has space.lab",
-		"has;semicolon.lab",
-		"has$(injection).lab",
-		"noext",      // single label, no dot
-		".leading-dot.lab",
-		"trailing-dot.lab.",
-	}
-	for _, domain := range cases {
-		t.Run(domain, func(t *testing.T) {
-			rc := validRunConfig()
-			rc.InternalDomain = domain
-			err := Validate(rc)
-			if err == nil {
-				t.Errorf("expected error for invalid domain %q, got nil", domain)
-			}
-		})
-	}
-}
-
-func TestValidate_ValidInternalDomains(t *testing.T) {
-	cases := []string{
-		"home.lab",
-		"my-homelab.internal",
-		"home.example.com",
-		"a.b.c",
-	}
-	for _, domain := range cases {
-		t.Run(domain, func(t *testing.T) {
-			rc := validRunConfig()
-			rc.InternalDomain = domain
-			if err := Validate(rc); err != nil {
-				t.Errorf("unexpected error for valid domain %q: %v", domain, err)
-			}
-		})
-	}
-}
-
-func TestValidate_InvalidBootstrapServerIP(t *testing.T) {
-	rc := validRunConfig()
-	rc.BootstrapServerIP = "not-an-ip"
-	err := Validate(rc)
-	if err == nil || !strings.Contains(err.Error(), "bootstrap_server_ip") {
-		t.Errorf("expected bootstrap_server_ip error, got: %v", err)
-	}
-}
-
-func TestValidate_InvalidLabVLANSubnet(t *testing.T) {
-	rc := validRunConfig()
-	rc.LabVLANSubnet = "10.0.0.0/99"
-	err := Validate(rc)
-	if err == nil || !strings.Contains(err.Error(), "lab_vlan_subnet") {
-		t.Errorf("expected lab_vlan_subnet error, got: %v", err)
-	}
-}
-
-func TestValidate_VaultThresholdExceedsShares(t *testing.T) {
-	rc := validRunConfig()
-	rc.VaultShares = 3
-	rc.VaultThreshold = 4
-	err := Validate(rc)
-	if err == nil || !strings.Contains(err.Error(), "vault_threshold") {
-		t.Errorf("expected vault_threshold error, got: %v", err)
-	}
-}
-
-func TestValidate_VaultSharesTooFew(t *testing.T) {
-	rc := validRunConfig()
-	rc.VaultShares = 2
-	rc.VaultThreshold = 2
-	err := Validate(rc)
-	if err == nil || !strings.Contains(err.Error(), "vault_shares") {
-		t.Errorf("expected vault_shares error, got: %v", err)
-	}
-}
-
-// ── ParseArch ─────────────────────────────────────────────────────────────────
 
 func TestParseArch(t *testing.T) {
 	cases := []struct {
@@ -334,94 +211,73 @@ func TestParseArch(t *testing.T) {
 		{"x86_64", ArchAMD64},
 		{"aarch64", ArchARM64},
 		{"arm64", ArchARM64},
-		{"  x86_64  ", ArchAMD64}, // trimmed
+		{"  x86_64  ", ArchAMD64},
 		{"i686", ArchUnknown},
 		{"", ArchUnknown},
 		{"armv7l", ArchUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
-			got := ParseArch(tc.input)
-			if got != tc.want {
+			if got := ParseArch(tc.input); got != tc.want {
 				t.Errorf("ParseArch(%q) = %q, want %q", tc.input, got, tc.want)
 			}
 		})
 	}
 }
 
-// ── TargetArch methods ────────────────────────────────────────────────────────
-
-func TestTargetArch_GoArch(t *testing.T) {
+func TestTargetArchMethods(t *testing.T) {
 	cases := []struct {
-		arch TargetArch
-		want string
+		arch        TargetArch
+		wantGo      string
+		wantAnsible string
 	}{
-		{ArchAMD64, "amd64"},
-		{ArchARM64, "arm64"},
-		{ArchUnknown, "unknown"},
+		{ArchAMD64, "amd64", "x86_64"},
+		{ArchARM64, "arm64", "aarch64"},
+		{ArchUnknown, "unknown", "unknown"},
 	}
 	for _, tc := range cases {
-		if got := tc.arch.GoArch(); got != tc.want {
-			t.Errorf("TargetArch(%q).GoArch() = %q, want %q", tc.arch, got, tc.want)
+		if got := tc.arch.GoArch(); got != tc.wantGo {
+			t.Errorf("%q.GoArch() = %q, want %q", tc.arch, got, tc.wantGo)
+		}
+		if got := tc.arch.AnsibleArch(); got != tc.wantAnsible {
+			t.Errorf("%q.AnsibleArch() = %q, want %q", tc.arch, got, tc.wantAnsible)
 		}
 	}
 }
-
-func TestTargetArch_AnsibleArch(t *testing.T) {
-	cases := []struct {
-		arch TargetArch
-		want string
-	}{
-		{ArchAMD64, "x86_64"},
-		{ArchARM64, "aarch64"},
-		{ArchUnknown, "unknown"},
-	}
-	for _, tc := range cases {
-		if got := tc.arch.AnsibleArch(); got != tc.want {
-			t.Errorf("TargetArch(%q).AnsibleArch() = %q, want %q", tc.arch, got, tc.want)
-		}
-	}
-}
-
-// ── Load ──────────────────────────────────────────────────────────────────────
 
 func TestLoad_NonExistentConfigAppliesDefaults(t *testing.T) {
-	rc, err := Load("/nonexistent/config.yaml", "")
+	rc, err := Load(filepath.Join(t.TempDir(), "missing.yaml"), "")
 	if err != nil {
 		t.Fatalf("Load with nonexistent file: %v", err)
 	}
-	if rc.VaultShares != 5 {
-		t.Errorf("VaultShares default: got %d, want 5", rc.VaultShares)
-	}
-	if rc.VaultThreshold != 3 {
-		t.Errorf("VaultThreshold default: got %d, want 3", rc.VaultThreshold)
-	}
-	if rc.SSHUser != "ubuntu" {
-		t.Errorf("SSHUser default: got %q, want %q", rc.SSHUser, "ubuntu")
+	if rc.VaultShares != 5 || rc.VaultThreshold != 3 || rc.SSHUser != "ubuntu" {
+		t.Errorf("unexpected defaults: shares=%d threshold=%d ssh_user=%q", rc.VaultShares, rc.VaultThreshold, rc.SSHUser)
 	}
 }
 
-func TestLoad_DefaultACMEServerURL(t *testing.T) {
-	t.Setenv("ACME_SERVER_URL", "")
-	rc, err := Load("/nonexistent/config.yaml", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	const wantDefault = "https://acme-v02.api.letsencrypt.org/directory"
-	if rc.ACMEServerURL != wantDefault {
-		t.Errorf("ACMEServerURL: got %q, want %q", rc.ACMEServerURL, wantDefault)
-	}
-}
+func TestLoad_ACMEServerURL(t *testing.T) {
+	t.Run("default", func(t *testing.T) {
+		t.Setenv("ACME_SERVER_URL", "")
+		rc, err := Load(filepath.Join(t.TempDir(), "missing.yaml"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const want = "https://acme-v02.api.letsencrypt.org/directory"
+		if rc.ACMEServerURL != want {
+			t.Errorf("ACMEServerURL = %q, want %q", rc.ACMEServerURL, want)
+		}
+	})
 
-func TestLoad_EnvOverridesACMEServerURL(t *testing.T) {
-	t.Setenv("ACME_SERVER_URL", "https://pebble.test/dir")
-	rc, err := Load("/nonexistent/config.yaml", "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if rc.ACMEServerURL != "https://pebble.test/dir" {
-		t.Errorf("ACMEServerURL: got %q, want override value", rc.ACMEServerURL)
-	}
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("ACME_SERVER_URL", "https://pebble.test/dir")
+		rc, err := Load(filepath.Join(t.TempDir(), "missing.yaml"), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rc.ACMEServerURL != "https://pebble.test/dir" {
+			t.Errorf("ACMEServerURL = %q", rc.ACMEServerURL)
+		}
+	})
 }
 
 func TestLoad_ParsesValidYAML(t *testing.T) {
@@ -433,49 +289,115 @@ internal_domain: homelab.test
 cloudflare_zone_id: zone123
 bootstrap_server_ip: 10.0.0.1
 lab_vlan_subnet: 192.168.10.0/24
+lab_gateway: 192.168.10.1
 lab_vlan_id: 42
 admin_email: ops@homelab.test
 vault_shares: 7
 vault_threshold: 4
 vault_init_output_path: /tmp/vault.json
+data_disk: /dev/vdb
+data_disk_mode: full
 `
-	f, err := os.CreateTemp("", "config-*.yaml")
-	if err != nil {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(f.Name())
-	if _, err := f.WriteString(content); err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
 
-	rc, err := Load(f.Name(), "")
+	rc, err := Load(path, "")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if rc.TargetHost != "10.0.0.1" {
-		t.Errorf("TargetHost: got %q, want %q", rc.TargetHost, "10.0.0.1")
+	if rc.TargetHost != "10.0.0.1" || rc.VaultShares != 7 || rc.LabVLANID != 42 {
+		t.Errorf("unexpected parsed config: %+v", rc.Config)
 	}
-	if rc.VaultShares != 7 {
-		t.Errorf("VaultShares: got %d, want 7", rc.VaultShares)
-	}
-	if rc.LabVLANID != 42 {
-		t.Errorf("LabVLANID: got %d, want 42", rc.LabVLANID)
+	if rc.DataDisk != "/dev/vdb" || rc.DataDiskMode != "full" {
+		t.Errorf("unexpected data disk config: disk=%q mode=%q", rc.DataDisk, rc.DataDiskMode)
 	}
 }
 
 func TestLoad_InvalidYAML(t *testing.T) {
-	f, err := os.CreateTemp("", "config-*.yaml")
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("target_host: [not: valid: yaml"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path, ""); err == nil {
+		t.Error("expected error for invalid YAML")
+	}
+}
+
+func TestLoad_RejectsUnknownField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("target_host: 192.168.1.10\nmade_up_option: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(path, "")
+	if err == nil || !strings.Contains(err.Error(), "made_up_option") {
+		t.Fatalf("expected unknown-field error, got %v", err)
+	}
+}
+
+func TestLoad_AppliesAcceptedDefaults(t *testing.T) {
+	rc, err := Load(filepath.Join(t.TempDir(), "missing.yaml"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.Remove(f.Name())
-	f.WriteString("target_host: [not: valid: yaml")
-	f.Close()
+	if !rc.CertificateRenewalEnabled || !rc.ApplicationUpgradesEnabled || !rc.MonitoringEnabled {
+		t.Fatalf("accepted enabled defaults were not applied: %+v", rc.Config)
+	}
+	if rc.BackupEnabled || rc.PagingEnabled || rc.MAASDHCPEnabled || rc.OSAutomaticReboot {
+		t.Fatalf("safe disabled defaults were not applied: %+v", rc.Config)
+	}
+	if rc.BackupKeepDaily != 7 || rc.BackupKeepWeekly != 5 || rc.BackupKeepMonthly != 12 {
+		t.Fatalf("unexpected retention defaults: %d/%d/%d", rc.BackupKeepDaily, rc.BackupKeepWeekly, rc.BackupKeepMonthly)
+	}
+}
 
-	_, err = Load(f.Name(), "")
-	if err == nil {
-		t.Error("expected error for invalid YAML, got nil")
+func TestValidate_ConditionalBackupAndPagingSecrets(t *testing.T) {
+	t.Run("backup requires repository", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.BackupEnabled = true
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "backup_repository") {
+			t.Fatalf("expected repository error, got %v", err)
+		}
+	})
+
+	t.Run("backup requires passwords", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.BackupEnabled = true
+		rc.BackupRepository = "/mnt/truenas/restic"
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "RESTIC_PRIMARY_PASSWORD") {
+			t.Fatalf("expected Restic password error, got %v", err)
+		}
+	})
+
+	t.Run("paging requires destination", func(t *testing.T) {
+		rc := validRunConfig()
+		rc.PagingEnabled = true
+		rc.PagingProvider = "discord"
+		rc.PagingDiskWarningPercent = 85
+		rc.PagingDiskCriticalPercent = 95
+		err := Validate(rc)
+		if err == nil || !strings.Contains(err.Error(), "PAGING_DESTINATION_URL") {
+			t.Fatalf("expected paging destination error, got %v", err)
+		}
+	})
+}
+
+func TestValidate_MAASDHCPRequiresExplicitNetworkInputs(t *testing.T) {
+	rc := validRunConfig()
+	rc.MAASDHCPEnabled = true
+	err := Validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "lab_vlan_interface") {
+		t.Fatalf("expected interface error, got %v", err)
+	}
+
+	rc.LabVLANInterface = "enp1s0"
+	rc.DHCPRangeLow = "10.0.0.100"
+	rc.DHCPRangeHigh = "10.0.0.199"
+	if err := Validate(rc); err != nil {
+		t.Fatalf("valid explicit DHCP config rejected: %v", err)
 	}
 }
 
@@ -483,16 +405,14 @@ func TestLoad_SecretsFromEnv(t *testing.T) {
 	t.Setenv("CF_DNS_API_TOKEN", "test-cf-token")
 	t.Setenv("BOOTSTRAP_ADMIN_PASSWORD", "test-admin-pass")
 
-	rc, err := Load("/nonexistent/config.yaml", "")
+	rc, err := Load(filepath.Join(t.TempDir(), "missing.yaml"), "")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
 	if rc.Secrets.CloudflareAPIToken != "test-cf-token" {
-		t.Errorf("CloudflareAPIToken: got %q, want %q", rc.Secrets.CloudflareAPIToken, "test-cf-token")
+		t.Errorf("CloudflareAPIToken = %q", rc.Secrets.CloudflareAPIToken)
 	}
 	if rc.Secrets.AdminPassword != "test-admin-pass" {
-		t.Errorf("AdminPassword: got %q, want %q", rc.Secrets.AdminPassword, "test-admin-pass")
+		t.Errorf("AdminPassword = %q", rc.Secrets.AdminPassword)
 	}
 }
-=======
->>>>>>> d5fc950 (feat(config): add data_disk fields, DataPath() helper, and validation)

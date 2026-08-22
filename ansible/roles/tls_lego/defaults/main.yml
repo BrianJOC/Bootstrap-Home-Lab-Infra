@@ -20,3 +20,7 @@ lego_dns_provider: "cloudflare"
 # Endpoint for httpreq DNS provider (used when lego_dns_provider=httpreq).
 # The server must handle POST /present and POST /cleanup requests.
 lego_httpreq_endpoint: ""
+certificate_renewal_enabled: true
+certificate_renewal_on_calendar: daily
+certificate_renew_before_days: 30
+certificate_renewal_randomized_delay: 1h

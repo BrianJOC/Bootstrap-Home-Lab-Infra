@@ -15,16 +15,18 @@ func emptyRCm() *config.RunConfig {
 func completeRCm() *config.RunConfig {
 	return &config.RunConfig{
 		Config: &config.Config{
-			TargetHost:        "192.168.1.10",
-			SSHUser:           "ubuntu",
-			SSHKeyPath:        "/home/user/.ssh/id_ed25519",
-			InternalDomain:    "lab.example.com",
-			CloudflareZoneID:  "abc123",
-			BootstrapServerIP: "192.168.1.10",
-			LabVLANSubnet:     "192.168.1.0/24",
-			AdminEmail:        "admin@example.com",
-			VaultShares:       5,
-			VaultThreshold:    3,
+			TargetHost:          "192.168.1.10",
+			SSHUser:             "ubuntu",
+			SSHKeyPath:          "/home/user/.ssh/id_ed25519",
+			InternalDomain:      "lab.example.com",
+			CloudflareZoneID:    "abc123",
+			BootstrapServerIP:   "192.168.1.10",
+			LabVLANSubnet:       "192.168.1.0/24",
+			LabGateway:          "192.168.1.1",
+			AdminEmail:          "admin@example.com",
+			VaultInitOutputPath: "/tmp/vault-init.json",
+			VaultShares:         5,
+			VaultThreshold:      3,
 		},
 		Secrets: &config.Secrets{
 			CloudflareAPIToken: "cf-token",
@@ -59,5 +61,35 @@ func TestSelectInitialScreen(t *testing.T) {
 				t.Errorf("selectInitialScreen() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestBuildStagesDependencyOrder(t *testing.T) {
+	gotStages := buildStages()
+	got := make([]string, 0, len(gotStages))
+	for _, bootstrapStage := range gotStages {
+		got = append(got, bootstrapStage.Name())
+	}
+	want := []string{
+		"config-collection",
+		"storage-setup",
+		"dns",
+		"tls",
+		"vault",
+		"postgres",
+		"authentik",
+		"gitlab",
+		"maas",
+		"k3s",
+		"controller-recovery",
+		"lifecycle",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("stage count = %d, want %d (%v)", len(got), len(want), got)
+	}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Errorf("stage %d = %q, want %q", index, got[index], want[index])
+		}
 	}
 }

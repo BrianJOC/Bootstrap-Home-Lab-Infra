@@ -1,0 +1,16 @@
+---
+monitoring_enabled: true
+uptime_retention_days: 7
+journal_retention_days: 7
+observability_memory_limit_mb: 512
+observability_cpu_quota_percent: 50
+observability_storage_limit_gb: 5
+paging_enabled: false
+paging_provider: ""
+paging_destination_url: ""
+paging_critical_failures: 3
+paging_disk_warning_percent: 85
+paging_disk_critical_percent: 95
+paging_recovery_notifications: true
+uptime_kuma_version: "2.3.2"
+beszel_version: "0.18.7"

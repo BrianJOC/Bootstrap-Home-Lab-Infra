@@ -3,13 +3,19 @@
   hosts: all
   become: true
   roles:
+    - role: postgresql_install
+      vars:
+        bootstrap_server_ip: "127.0.0.1"
+        pg_admin_password: "TestPgAdminPass123!"
+        authentik_db_password: "test-pg-password-xxxxxxxxxxxxxxx"
+        gitlab_db_password: "test-gitlab-db-password"
+        maas_db_password: "test-maas-db-password"
     - role: authentik_install
       vars:
         internal_domain: home.test
         bootstrap_server_ip: "127.0.0.1"
         authentik_admin_password: "TestPassword123!"
         admin_email: "test@home.test"
-        authentik_use_bundled_postgres: true
         # Fixed test-only secrets — override auto-generation defaults
         authentik_secret_key: "test-secret-key-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-        authentik_pg_password: "test-pg-password-xxxxxxxxxxxxxxx"
+        authentik_db_password: "test-pg-password-xxxxxxxxxxxxxxx"

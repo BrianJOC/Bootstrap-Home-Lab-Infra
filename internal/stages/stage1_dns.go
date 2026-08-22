@@ -18,8 +18,8 @@ type DNSStage struct{}
 func (s *DNSStage) Name() string { return "dns" }
 
 // Check verifies Technitium DNS is running on the target.
-func (s *DNSStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.RunContext) (bool, error) {
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+func (s *DNSStage) Check(_ context.Context, cfg *config.Config, rc *runcontext.RunContext) (bool, error) {
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return false, err
 	}
@@ -35,8 +35,8 @@ func (s *DNSStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.Ru
 }
 
 // Run deploys Technitium DNS via Ansible.
-func (s *DNSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
-	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
+func (s *DNSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secrets, rc *runcontext.RunContext, sink stage.Sink) error {
+	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
 		return err
 	}

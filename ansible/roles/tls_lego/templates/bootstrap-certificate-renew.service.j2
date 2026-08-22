@@ -1,0 +1,13 @@
+[Unit]
+Description=Validate, renew, and atomically activate the homelab wildcard certificate
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bootstrap-renew-certificate
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths={{ cert_dir }} /var/lib/bootstrap-home-infra /run/lock
+NoNewPrivileges=yes

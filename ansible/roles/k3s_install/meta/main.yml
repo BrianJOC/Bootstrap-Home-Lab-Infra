@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: k3s_install
+  author: bootstrap-home-infra
+  description: Install a pinned initial k3s control plane
+  license: MIT
+  min_ansible_version: "2.15"
+dependencies: []
