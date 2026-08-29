@@ -4,7 +4,10 @@ storage "raft" {
 }
 
 listener "tcp" {
-  address       = "{{ bootstrap_server_ip }}:{{ vault_port }}"
+  # Listen on loopback for target-local lifecycle commands and on the host
+  # interface for lab clients. Network exposure remains bounded by the host
+  # firewall and lab VLAN policy.
+  address       = "0.0.0.0:{{ vault_port }}"
   tls_cert_file = "{{ vault_config_dir }}/tls/fullchain.pem"
   tls_key_file  = "{{ vault_config_dir }}/tls/privkey.pem"
 }

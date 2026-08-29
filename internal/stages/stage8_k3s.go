@@ -33,24 +33,19 @@ func (s *K3sStage) Check(_ context.Context, cfg *config.Config, rc *runcontext.R
 	defer client.Close()
 
 	stdout, _, err := client.Run(
-		`systemctl is-active k3s 2>/dev/null && kubectl get nodes --kubeconfig /etc/rancher/k3s/k3s.yaml 2>/dev/null | grep -q Ready && echo running || echo not-running`,
+		`systemctl is-active --quiet k3s 2>/dev/null && sudo /usr/local/bin/k3s kubectl wait --for=condition=Ready nodes --all --timeout=10s >/dev/null 2>&1 && echo running || echo not-running`,
 	)
-	if err != nil {
-		return false, nil
-	}
-	if strings.TrimSpace(stdout) != "running" {
-		return false, nil
-	}
-	statePath, err := terraformrunner.StatePath("k3s-" + cfg.K3sClusterName)
+	handoffComplete, err := terraformHandoffStatus("k3s-" + cfg.K3sClusterName)
 	if err != nil {
 		return false, err
 	}
-	_, err = os.Stat(statePath)
-	if err != nil {
+	if err != nil || strings.TrimSpace(stdout) != "running" {
+		if handoffComplete {
+			return false, fmt.Errorf("k3s is unhealthy after its GitLab state handoff; inspect the k3s service instead of replaying bootstrap")
+		}
 		return false, nil
 	}
-	_, err = os.Stat(strings.TrimSuffix(statePath, ".tfstate") + ".handoff.json")
-	return err == nil, nil
+	return handoffComplete, nil
 }
 
 // Run deploys k3s clusters via Ansible.
@@ -127,7 +122,7 @@ vault kv put %q value=@"$KUBECONFIG_FILE" >/dev/null
 	if err != nil {
 		return err
 	}
-	projectID, err := terraformRunner.Output("terraform/modules/gitlab-config", "gitlab-config", "iac_project_id")
+	projectID, err := terraformRunner.Output("terraform/environments/bootstrap/gitlab", "bootstrap-gitlab", "iac_project_id")
 	if err != nil {
 		return fmt.Errorf("reading GitLab IaC project for k3s handoff: %w", err)
 	}
@@ -138,7 +133,7 @@ vault kv put %q value=@"$KUBECONFIG_FILE" >/dev/null
 	return terraformRunner.MigrateStateToGitLab(
 		component,
 		"terraform/modules/k8s-cluster",
-		"https://gitlab."+cfg.InternalDomain,
+		gitlabBaseURL(cfg),
 		projectID,
 		strings.TrimSpace(string(gitlabToken)),
 	)

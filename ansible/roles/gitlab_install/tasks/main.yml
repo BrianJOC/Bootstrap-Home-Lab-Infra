@@ -19,20 +19,48 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   become: false
 
-# Idempotency gate: check if GitLab is already running
-- name: Check if GitLab runsvdir is active
-  ansible.builtin.command: gitlab-ctl status
-  register: gitlab_status_check
+- name: Create protected GitLab runtime-secret directory
+  ansible.builtin.file:
+    path: /etc/bootstrap-home-infra
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Store minimum GitLab runtime secrets for restart and recovery
+  ansible.builtin.copy:
+    content: "{{ item.value }}\n"
+    dest: "/etc/bootstrap-home-infra/{{ item.name }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop:
+    - name: gitlab-db-password
+      value: "{{ gitlab_db_password }}"
+    - name: gitlab-oidc-secret
+      value: "{{ gitlab_oidc_secret | default('') }}"
+  no_log: true
+
+# Idempotency gate: a partial Omnibus post-install may start runit services, so
+# service status is not proof that dpkg completed successfully.
+- name: Check if GitLab package is fully configured
+  ansible.builtin.command: dpkg-query -W -f=${db:Status-Status} gitlab-ce
+  register: gitlab_package_status
   changed_when: false
   failed_when: false
 
-- name: Set gitlab_already_running fact
+- name: Set GitLab package state fact
   ansible.builtin.set_fact:
-    gitlab_already_running: "{{ gitlab_status_check.rc == 0 }}"
+    gitlab_package_configured: >-
+      {{ gitlab_package_status.rc == 0 and
+         (gitlab_package_status.stdout | trim) == 'installed' }}
 
 - name: Install GitLab CE
   ansible.builtin.include_tasks: install.yml
-  when: not gitlab_already_running
+  when: not gitlab_package_configured
+
+- name: Reconcile GitLab configuration
+  ansible.builtin.include_tasks: reconcile.yml
 
 # configure.yml runs unconditionally — it is idempotent via API check+create guards
 # and the controller-side token file. Re-runs are safe.

@@ -29,19 +29,31 @@
     state: present
   when: monitoring_enabled | bool
 
-- name: Wait for Beszel hub key endpoint
+- name: Wait for Beszel hub health endpoint
   ansible.builtin.uri:
-    url: http://127.0.0.1:8090/api/beszel/getkey
+    url: http://127.0.0.1:8090/api/health
     status_code: 200
-  register: beszel_hub_key
+  register: beszel_hub_health
   retries: 24
   delay: 5
-  until: beszel_hub_key.status == 200
+  until: beszel_hub_health.status == 200
+  when: monitoring_enabled | bool
+
+- name: Derive the Beszel hub public key from its protected identity
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -y
+      - -f
+      - /opt/bootstrap-observability/beszel/id_ed25519
+  register: beszel_hub_public_key
+  changed_when: false
+  no_log: true
   when: monitoring_enabled | bool
 
 - name: Store Beszel hub public key for the local agent
   ansible.builtin.copy:
-    content: "KEY={{ beszel_hub_key.json.key | default(beszel_hub_key.json) }}\n"
+    content: "KEY={{ beszel_hub_public_key.stdout | trim }}\n"
     dest: /opt/bootstrap-observability/beszel-agent.env
     mode: "0600"
   no_log: true
@@ -105,6 +117,12 @@
     enabled: true
     daemon_reload: true
 
+- name: Create journald drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    mode: "0755"
+
 - name: Limit local journal retention
   ansible.builtin.template:
     src: bootstrap-retention.conf.j2
@@ -113,7 +131,9 @@
   notify: restart journald
 
 - name: Record lifecycle installation
-  ansible.builtin.file:
-    path: /var/lib/bootstrap-home-infra/lifecycle-configured
-    state: touch
+  ansible.builtin.copy:
+    # Bump with the lifecycle Check contract when target-host lifecycle source
+    # needs a one-time convergence on already bootstrapped hosts.
+    content: "configured=6\n"
+    dest: /var/lib/bootstrap-home-infra/lifecycle-configured
     mode: "0600"

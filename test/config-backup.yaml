@@ -1,0 +1,20 @@
+target_host: "localhost:2222"
+ssh_user: "ansible"
+ssh_key_path: "/Users/brian/src/bootstrap-home-infra/test/keys/test_id_ed25519"
+internal_domain: "lab.test"
+cloudflare_zone_id: "test-zone-id-placeholder"
+bootstrap_server_ip: "10.0.2.15"
+lab_vlan_subnet: "10.99.0.0/24"
+lab_gateway: "10.99.0.1"
+lab_vlan_id: 99
+admin_email: "test@lab.test"
+vault_init_output_path: "/tmp/bootstrap-home-infra-test-vault-init.json"
+vault_shares: 3
+vault_threshold: 2
+
+# Disposable integration profile: this repository is deliberately on the VM's
+# local disk so backup creation and isolated restore can be proven without
+# requiring a real TrueNAS or USB target. It is not counted as production
+# protection and must never be copied into a homelab configuration.
+backup_enabled: true
+backup_repository: "/var/lib/bootstrap-test-restic"

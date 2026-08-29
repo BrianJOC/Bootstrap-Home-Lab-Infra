@@ -1,6 +1,6 @@
 # Backup and Recovery
 
-> Status: Accepted backup target state — 2026-07-27
+> Status: Accepted; manifest-backed local-only disposable restore passed — 2026-08-27
 > NAS implementation guide: [TrueNAS backup guide](truenas-backup-guide.md)
 
 ## Decision
@@ -238,6 +238,20 @@ overwrite a running service until the operator reviews the selected snapshot,
 target, expected data loss window, and rollback point.
 
 ## Required implementation evidence
+
+Evidence recorded across the latest disposable run: the supported no-repository trial profile passed
+the full bootstrap and a no-change rerun. A separate local-only QEMU profile
+(explicitly not counted as durable protection) initialized Restic, created
+native PostgreSQL, GitLab, k3s, Vault, configuration, and controller artifacts,
+recorded a `complete=true` snapshot, then restored final snapshot `355a6d5c`
+(2.016 GiB) into a new isolated directory. All 30 checksum-manifest entries
+verified, including the native GitLab archive, every PostgreSQL dump, the Vault
+snapshot, protected runtime configuration, and controller bundle. The isolated
+copy was then removed and the VM returned to `backup_enabled: false` trial mode;
+the Restic evidence repository was retained. Failure injection also proved
+incomplete staging is preserved. TrueNAS mount-loss, repository identity
+mismatch, retention deletion, and optional USB hardware/copy/unmount remain
+external acceptance tests.
 
 - Wizard acceptance of defaults, custom intervals, and `backup_enabled: false`.
 - Trial-mode completion, persistent status, later `backup configure`, and

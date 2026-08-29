@@ -2,6 +2,8 @@
 # Rendered from user-data.tmpl by 'just build-base-image'.
 # SSH_PUBLIC_KEY is injected from test/keys/test_id_ed25519.pub at build time.
 
+manage_etc_hosts: true
+
 users:
   - name: ansible
     sudo: ALL=(ALL) NOPASSWD:ALL

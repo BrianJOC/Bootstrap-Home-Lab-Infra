@@ -821,7 +821,7 @@ and does not block stage completion.
 
 ### Outputs / Postconditions
 
-1. MAAS is running at `http://maas.home.<domain>:5240/MAAS`; `GET /MAAS/api/2.0/` returns HTTP 200
+1. MAAS is running at `http://maas.home.<domain>:5240/MAAS`; `GET /MAAS/api/2.0/version/` returns HTTP 200
 2. MAAS admin credentials are in Vault at `secret/data/bootstrap/maas/admin`
 3. MAAS upstream DNS is configured to use the Technitium DNS IP
 4. MAAS domain is set to `maas.home.<domain>`
@@ -861,7 +861,7 @@ and does not block stage completion.
 | Vault sealed at stage start | `GET /v1/sys/seal-status` returns sealed | Halt; TUI error; instruct operator to unseal; retry stage |
 | MAAS snap install fails (network, snap store unreachable) | Non-zero snap install exit code | Emit error + log path; `[VERIFY]` retry or abort |
 | MAAS database init fails (wrong DSN, PostgreSQL not accepting connections) | `maas init` non-zero exit | Check PostgreSQL connectivity from target; verify `maas` user permissions; emit instructions; retry `bootstrap --stage maas` |
-| MAAS health timeout (300s) | No HTTP 200 from `/MAAS/api/2.0/` within timeout | Emit timeout error; `[VERIFY]` retry or abort |
+| MAAS health timeout (300s) | No HTTP 200 from `/MAAS/api/2.0/version/` within timeout | Emit timeout error; `[VERIFY]` retry or abort |
 | DHCP prerequisites fail | Interface/VLAN missing; invalid or overlapping subnet/range; Technitium unhealthy | Refuse cutover without changing DHCP |
 | Existing DHCP authority detected | Bounded probe observes a DHCP offer after the operator's UniFi confirmation | Refuse to enable MAAS; identify the observed server when possible |
 | MAAS DHCP enable or verification fails | MAAS API error or test client cannot obtain a correct lease | Disable partial MAAS DHCP; direct operator to restore UniFi DHCP for the lab VLAN |
@@ -873,7 +873,7 @@ and does not block stage completion.
 
 - Boot fresh QEMU VM with lab VLAN configured; run Stages 0–6
 - Run `just test-stage maas`
-- Assert: `GET http://maas.home.test:5240/MAAS/api/2.0/` returns HTTP 200
+- Assert: `GET http://maas.home.test:5240/MAAS/api/2.0/version/` returns HTTP 200
 - Assert: lab VLAN subnet visible in MAAS fabric/subnet API
 - Assert: DHCP remains disabled with the default configuration
 - Assert: `secret/data/bootstrap/maas/terraform-api-key` readable from Vault
@@ -1476,6 +1476,18 @@ audit, and requires explicit adoption. The complete contract is in
 
 ## Cross-Cutting Flow: Server Adoption (`just adopt-server`)
 
+> Implementation record — 2026-08-27: the read-only audit, default-route PXE
+> NIC selection, local BMC evidence, schema-valid node YAML, exact display,
+> interactive/explicit approval, short-lived PAT refresh, draft MR creation, and
+> duplicate-definition/open-MR guards are implemented and disposable-integration
+> verified. Generated node definitions visibly authorize Ubuntu 24.04 deployment,
+> and schema-validated Terraform creates both the reviewed `maas_machine` and
+> the separate `maas_instance` allocation/deployment lifecycle. Main-branch
+> apply runs after the reviewed MR merge. Physical PXE/deployment proof remains
+> an external acceptance test. Optional k3s join is intentionally held at the
+> accepted post-deploy SSH fingerprint gate; the target-state steps below are
+> retained and must not be described as unattended automation yet.
+
 ### Summary
 
 Server adoption is the day-2 workflow for adding a new physical server to the homelab. The operator runs `just adopt-server <ip>`; the bootstrap binary connects to the target, gathers hardware metadata, attempts BMC/IPMI detection, generates node and MAAS machine definitions, and opens a GitLab MR with pre-populated configuration. After the operator reviews and merges the MR, GitLab CI provisions the server via the Terraform MAAS provider, MAAS commissions it, and (if a cluster is referenced in the node definition) k3s is installed to join the node to the cluster. The operator never manually configures MAAS or writes Ansible inventory.
@@ -1494,12 +1506,12 @@ Server adoption is the day-2 workflow for adding a new physical server to the ho
 ### Outputs / Postconditions
 
 1. GitLab MR is opened at `https://gitlab.home.<domain>/infrastructure/iac/-/merge_requests/<id>`
-2. MR title: `adopt: add node <hostname> (<ip>)`
+2. MR title: `Draft: adopt: add node <hostname> (<ip>)`
 3. MR body contains: hardware summary table (CPU, RAM, disk, NICs, MACs, arch), BMC/IPMI status (detected or not detected), suggested cluster assignment (if any)
 4. `infrastructure/nodes/<hostname>.yaml` is committed to the MR branch with collected metadata and provisioner type
 5. MR URL is printed to the operator's terminal
 6. After MR merge: MAAS machine record is created with MAC address, arch, and BMC details
-7. After MR merge: MAAS commissions machine (PXE boot, hardware discovery, marks as `Ready`)
+7. After MR merge: MAAS commissions machine (PXE boot, hardware discovery, marks as `Ready`) and deploys the reviewed `distro_series`
 8. After MR merge (if node definition references a cluster): Ansible `roles/k3s_install` runs; node appears as `Ready` in cluster
 
 ### Acceptance Criteria
@@ -1530,7 +1542,7 @@ Server adoption is the day-2 workflow for adding a new physical server to the ho
 - Assert: MR opened at expected URL within 2 minutes
 - Assert: MR body contains hardware summary with CPU, RAM, disk, NIC MACs
 - Assert: `infrastructure/nodes/<hostname>.yaml` is in the MR branch
-- Assert: MR title matches `adopt: add node <hostname> (<ip>)` pattern
+- Assert: MR title matches `Draft: adopt: add node <hostname> (<ip>)` pattern
 - Merge MR (or simulate pipeline)
 - Assert: MAAS machine record created with correct MAC
 - Assert: MAAS machine reaches `Ready` state after commissioning

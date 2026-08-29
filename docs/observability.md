@@ -1,6 +1,6 @@
 # Constrained Observability and Paging
 
-> Status: Accepted target state — 2026-07-28
+> Status: Accepted; constrained target-local runtime integration passed — 2026-08-26
 
 ## Decision
 
@@ -20,6 +20,17 @@ does not execute telemetry.
 
 Prometheus, Grafana, Loki, distributed tracing, centralized log ingestion, and
 per-request application telemetry are out of scope for v1.
+
+The bootstrap health adapter is the immediately active minimum alerting path:
+it performs protocol-aware checks, maintains consecutive-failure counters,
+writes the dashboard JSON, and sends at most one incident trigger plus an
+optional recovery notification. It does not depend on first-run setup in either
+dashboard. Uptime Kuma requires its normal first-user setup before optional
+visual monitors are added. Beszel similarly requires the operator to create the
+first user and add the local system using the derived hub public key and Unix
+socket shown by the installed configuration. Until those steps are complete,
+the health adapter and direct paging are active but the two product dashboards
+must not be described as fully configured.
 
 ## Known availability boundary
 
@@ -220,6 +231,13 @@ from a smaller USB critical set. Monitoring failure never blocks restoration of
 DNS, Vault, PostgreSQL, Authentik, or GitLab.
 
 ## Required evidence
+
+Evidence recorded 2026-08-26: Uptime Kuma, Beszel hub, local Beszel agent, and
+the health-adapter timer ran together on the ARM64 QEMU target with the declared
+container/systemd budgets; the adapter checked all installed platform services.
+Paging-disabled mode was the tested default. Provider-specific delivery tests,
+dashboard first-user setup, retention aging, deliberate alert/recovery
+injection, and x86_64 budget measurements remain acceptance work.
 
 - All functional checks distinguish application readiness from an open port.
 - Discord, Telegram, ntfy, generic webhook, failed-test, and paging-disabled

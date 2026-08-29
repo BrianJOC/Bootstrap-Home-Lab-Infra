@@ -1,97 +1,87 @@
 ---
-# Wait for Technitium API to be available
-- name: Wait for Technitium HTTP API to be ready
+- name: Ensure controller bootstrap credential directory exists
+  ansible.builtin.file:
+    path: "{{ lookup('env', 'HOME') }}/.bootstrap"
+    state: directory
+    mode: "0700"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
+- name: Inspect persisted Technitium automation token
+  ansible.builtin.stat:
+    path: "{{ lookup('env', 'HOME') }}/.bootstrap/technitium-api-token"
+  register: technitium_token_file
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+
+- name: Read persisted Technitium automation token
+  ansible.builtin.set_fact:
+    technitium_api_token: >-
+      {{ lookup('file', lookup('env', 'HOME') + '/.bootstrap/technitium-api-token') | trim }}
+  when: technitium_token_file.stat.exists
+  no_log: true
+
+- name: Validate persisted Technitium automation token
   ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/user/login"
+    url: "http://localhost:{{ technitium_port_http }}/api/user/session/get"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ technitium_api_token }}"
+    status_code: [200]
+    return_content: true
+  register: technitium_token_validation
+  failed_when: false
+  when: technitium_api_token is defined
+  no_log: true
+
+- name: Create non-expiring Technitium automation token
+  ansible.builtin.uri:
+    url: "http://localhost:{{ technitium_port_http }}/api/user/createToken"
     method: POST
     body_format: form-urlencoded
     body:
       user: admin
       pass: "{{ technitium_admin_password }}"
-      includeInfo: "true"
+      tokenName: bootstrap-home-infra
     status_code: [200]
-    validate_certs: false
     return_content: true
-  register: technitium_login
+  register: technitium_token_created
   retries: 30
   delay: 5
-  until: technitium_login.status == 200 and (technitium_login.content | from_json).get('status', 'error') == 'ok'
+  until: >-
+    technitium_token_created.status == 200 and
+    (technitium_token_created.content | from_json).get('status', 'error') == 'ok'
+  when: >-
+    technitium_token_validation is skipped or
+    (technitium_token_validation.content | default('{}') | from_json).get('status', 'error') != 'ok'
   no_log: true
 
-- name: Set Technitium API token fact
+- name: Select effective Technitium automation token
   ansible.builtin.set_fact:
-    technitium_api_token: "{{ (technitium_login.content | from_json)['token'] }}"
+    technitium_api_token: >-
+      {{ (technitium_token_created.content | from_json).token
+         if technitium_token_created is not skipped
+         else technitium_api_token }}
   no_log: true
 
-# Check if zone already exists
-- name: Check if DNS zone already exists
-  ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/zones/list"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      token: "{{ technitium_api_token }}"
-    status_code: [200]
-    return_content: true
-  register: zone_list
+- name: Persist Technitium automation token on controller
+  ansible.builtin.copy:
+    content: "{{ technitium_api_token }}"
+    dest: "{{ lookup('env', 'HOME') }}/.bootstrap/technitium-api-token"
+    mode: "0600"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
   no_log: true
 
-- name: Set zone_exists fact
-  ansible.builtin.set_fact:
-    technitium_zone_exists: >-
-      {{ (zone_list.content | from_json).get('response', {}).get('zones', []) |
-         selectattr('name', 'equalto', internal_domain) | list | length > 0 }}
-
-- name: Create primary DNS zone
-  ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/zones/create"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      token: "{{ technitium_api_token }}"
-      zone: "{{ internal_domain }}"
-      type: Primary
-    status_code: [200]
-  when: not technitium_zone_exists
-  no_log: true
-
-# Check existing DNS records and create missing ones
-- name: Check existing DNS records
-  ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/zones/records/get"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      token: "{{ technitium_api_token }}"
-      zone: "{{ internal_domain }}"
-      domain: "{{ item.name }}.{{ internal_domain }}"
-      type: A
-    status_code: [200]
-    return_content: true
-  register: dns_record_checks
-  loop: "{{ technitium_dns_records }}"
-  no_log: true
-
-- name: Create A records for bootstrap services
-  ansible.builtin.uri:
-    url: "http://localhost:{{ technitium_port_http }}/api/zones/records/add"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      token: "{{ technitium_api_token }}"
-      zone: "{{ internal_domain }}"
-      domain: "{{ item.item.name }}.{{ internal_domain }}"
-      type: A
-      ipAddress: "{{ bootstrap_server_ip }}"
-      ttl: "3600"
-    status_code: [200]
-  loop: "{{ dns_record_checks.results }}"
-  when: >
-    (item.content | from_json).get('response', {}).get('records', []) | length == 0
-  loop_control:
-    label: "{{ item.item.name }}.{{ internal_domain }}"
-
-# Configure target resolver to use Technitium
 - name: Ensure systemd-resolved drop-in directory exists
   ansible.builtin.file:
     path: /etc/systemd/resolved.conf.d
@@ -111,7 +101,7 @@
   ansible.builtin.meta: flush_handlers
   when: ansible_service_mgr == "systemd"
 
-- name: Point /etc/resolv.conf at full resolver (routes to Technitium)
+- name: Point /etc/resolv.conf at full resolver
   ansible.builtin.file:
     src: /run/systemd/resolve/resolv.conf
     dest: /etc/resolv.conf

@@ -1,0 +1,57 @@
+---
+- name: Install lightweight shared ingress
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+
+- name: Install shared homelab ingress configuration
+  ansible.builtin.template:
+    src: bootstrap-home-infra.nginx.j2
+    dest: /etc/nginx/sites-available/bootstrap-home-infra
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload bootstrap ingress
+
+- name: Disable the distribution default ingress site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload bootstrap ingress
+
+- name: Enable shared homelab ingress site
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/bootstrap-home-infra
+    dest: /etc/nginx/sites-enabled/bootstrap-home-infra
+    state: link
+  notify: reload bootstrap ingress
+
+- name: Validate shared ingress configuration
+  ansible.builtin.command: nginx -t
+  changed_when: false
+
+- name: Apply shared ingress configuration before dependent stages
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start shared ingress
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+
+- name: Create shared ingress state directory
+  ansible.builtin.file:
+    path: /var/lib/bootstrap-home-infra
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Record shared ingress topology version
+  ansible.builtin.copy:
+    content: "shared-ingress-v2\n"
+    dest: /var/lib/bootstrap-home-infra/ingress-version
+    owner: root
+    group: root
+    mode: "0644"

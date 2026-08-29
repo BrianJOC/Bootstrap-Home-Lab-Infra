@@ -3,7 +3,7 @@
 # Uses the same ~/.bootstrap/pg-maas-password written by postgresql_install.
 - name: Set MAAS database URI fact
   ansible.builtin.set_fact:
-    maas_db_uri: "postgresql://maas:{{ maas_db_password }}@{{ bootstrap_server_ip }}/maas"
+    maas_db_uri: "postgres://maas:{{ maas_db_password }}@{{ bootstrap_server_ip }}/maas"
   no_log: true
 
 # Check if MAAS is already initialized
@@ -50,7 +50,7 @@
 # Wait for MAAS API to be ready
 - name: Wait for MAAS API to be ready
   ansible.builtin.uri:
-    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/"
+    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/version/"
     method: GET
     status_code: [200]
     validate_certs: false
@@ -71,6 +71,18 @@
     maas_api_key: "{{ maas_api_key_result.stdout | trim }}"
   no_log: true
 
+- name: Persist MAAS API key on controller
+  ansible.builtin.copy:
+    content: "{{ maas_api_key }}"
+    dest: "{{ lookup('env', 'HOME') }}/.bootstrap/maas-api-key"
+    mode: "0600"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+  no_log: true
+
 # Login to MAAS CLI (writes ~/.maas.d profile used by subsequent maas commands)
 - name: Log into MAAS CLI
   ansible.builtin.command: >
@@ -78,24 +90,6 @@
     http://localhost:{{ maas_port }}/MAAS/api/2.0/
     {{ maas_api_key }}
   no_log: true
-  changed_when: true
-
-# Configure upstream DNS to use Technitium.
-# MAAS CLI set-config always returns "Success." regardless of whether the value changed —
-# no way to detect idempotency from exit code or output, so changed_when: true is accurate.
-- name: Configure MAAS upstream DNS to use Technitium
-  ansible.builtin.command: >
-    maas {{ maas_admin_user }} maas set-config
-    name=upstream_dns value={{ bootstrap_server_ip }}
-  register: maas_dns_config
-  changed_when: true
-
-# Configure MAAS name
-- name: Configure MAAS domain name
-  ansible.builtin.command: >
-    maas {{ maas_admin_user }} maas set-config
-    name=maas_name value=maas.{{ internal_domain }}
-  register: maas_domain_config
   changed_when: true
 
 # Import Ubuntu OS images — fire and forget (async: 3600, poll: 0).

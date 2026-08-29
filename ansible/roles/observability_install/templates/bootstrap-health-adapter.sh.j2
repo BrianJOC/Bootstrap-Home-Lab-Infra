@@ -32,7 +32,7 @@ if command -v gitlab-ctl >/dev/null; then
   check gitlab curl --fail --silent "http://127.0.0.1/-/readiness"
 fi
 if command -v maas >/dev/null; then
-  check maas curl --fail --silent "http://127.0.0.1:5240/MAAS/api/2.0/"
+  check maas curl --fail --silent "http://127.0.0.1:5240/MAAS/api/2.0/version/"
 fi
 if command -v k3s >/dev/null; then
   check k3s k3s kubectl get --raw=/readyz
@@ -78,8 +78,10 @@ if [ "$disk_percent" -ge {{ paging_disk_critical_percent | int }} ]; then
 fi
 previous=healthy
 [ ! -f "$state/last-status" ] || previous="$(< "$state/last-status")"
+current="$overall"
+[ "$page" != true ] || current=critical
 message="homelab status=$overall failures=${failures[*]:-none} dashboard=https://uptime.{{ internal_domain }}"
-if [ "$page" = true ] || { [ "$overall" = healthy ] && [ "$previous" != healthy ] && [ {{ paging_recovery_notifications | bool | ternary('1', '0') }} -eq 1 ]; }; then
+if { [ "$page" = true ] && [ "$previous" != critical ]; } || { [ "$overall" = healthy ] && [ "$previous" = critical ] && [ {{ paging_recovery_notifications | bool | ternary('1', '0') }} -eq 1 ]; }; then
   case {{ paging_provider | quote }} in
     discord) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf -H 'Content-Type: application/json' --data "$(jq -nc --arg content "$message" '{content:$content}')" >/dev/null ;;
     ntfy) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf --data-binary "$message" >/dev/null ;;
@@ -87,5 +89,5 @@ if [ "$page" = true ] || { [ "$overall" = healthy ] && [ "$previous" != healthy 
     webhook) curl --silent --show-error --config /etc/bootstrap-home-infra/paging/curl.conf -H 'Content-Type: application/json' --data "$(jq -nc --arg message "$message" '{message:$message}')" >/dev/null ;;
   esac
 fi
-printf '%s\n' "$overall" > "$state/last-status"
+printf '%s\n' "$current" > "$state/last-status"
 {% endif %}

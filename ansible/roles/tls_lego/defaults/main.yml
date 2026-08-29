@@ -13,6 +13,13 @@ tls_renew_threshold_seconds: 2592000
 # Required when using a test ACME server (e.g., Pebble) with a self-signed cert.
 # Leave empty for production Let's Encrypt.
 lego_acme_ca_cert_url: ""
+# Optional test-only URL for the ephemeral CA that signs certificates issued
+# by the ACME harness. This is distinct from the CA protecting its API.
+lego_acme_issuing_ca_cert_url: ""
+# Optional test-only hostname mapping for an ACME service hosted outside a
+# disposable VM. Production leaves both values empty.
+acme_server_host: ""
+acme_server_host_ip: ""
 cloudflare_api_base_url: "https://api.cloudflare.com"
 # DNS provider for lego. Use "cloudflare" for production.
 # Override to "httpreq" for testing with a mock HTTP endpoint.

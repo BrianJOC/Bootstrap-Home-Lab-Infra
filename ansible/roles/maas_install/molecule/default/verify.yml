@@ -19,7 +19,7 @@
 
     - name: Check MAAS API responds on port 5240
       ansible.builtin.uri:
-        url: "http://127.0.0.1:5240/MAAS/api/2.0/"
+        url: "http://127.0.0.1:5240/MAAS/api/2.0/version/"
         method: GET
         status_code: 200
       register: maas_api

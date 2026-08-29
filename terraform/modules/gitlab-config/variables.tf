@@ -1,12 +1,6 @@
 variable "gitlab_url" {
   type        = string
-  description = "GitLab base URL (e.g. https://gitlab.home.example.com)"
-}
-
-variable "gitlab_token" {
-  type        = string
-  sensitive   = true
-  description = "GitLab personal access token with api scope"
+  description = "GitLab base URL used in generated backend examples."
 }
 
 variable "vault_address" {
@@ -23,4 +17,9 @@ variable "vault_jwt_auth_path" {
 variable "internal_domain" {
   type        = string
   description = "Internal domain (e.g. home.example.com)"
+}
+
+variable "maas_api_url" {
+  type        = string
+  description = "MAAS API URL exposed to the day-2 Terraform pipeline."
 }

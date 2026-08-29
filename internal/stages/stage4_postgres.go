@@ -27,7 +27,7 @@ func (s *PostgreSQLStage) Check(_ context.Context, cfg *config.Config, rc *runco
 	defer client.Close()
 
 	stdout, _, err := client.Run(
-		`systemctl is-active postgresql 2>/dev/null && pg_isready -h localhost -p 5432 2>/dev/null && echo running || echo not-running`,
+		`systemctl is-active --quiet postgresql 2>/dev/null && pg_isready -h localhost -p 5432 >/dev/null 2>&1 && sudo grep -Fq '172.30.10.0/24' /etc/postgresql/17/main/pg_hba.conf && test "$(sudo -u postgres psql -tAc "SELECT count(*) FROM pg_database d JOIN pg_roles r ON d.datdba=r.oid WHERE (d.datname,r.rolname) IN (('authentik','authentik'),('gitlab','gitlab'),('maas','maas'))")" = 3 && echo running || echo not-running`,
 	)
 	if err != nil {
 		return false, fmt.Errorf("checking postgresql status on target: %w", err)

@@ -6,7 +6,8 @@ flock -n 9 || exit 0
 
 state=/var/lib/bootstrap-home-infra
 staging="$(mktemp -d "$state/backup-staging.XXXXXX")"
-complete=true
+complete=false
+vault_complete=true
 cleanup() {
   if [ "$complete" = true ]; then
     rm -rf "$staging"
@@ -24,16 +25,19 @@ test "$actual" = "$expected"
 install -d -m 0700 "$staging/postgresql" "$staging/config"
 sudo -u postgres pg_dumpall --globals-only > "$staging/postgresql/globals.sql"
 while IFS= read -r database; do
-  sudo -u postgres pg_dump --format=custom --file="$staging/postgresql/$database.dump" "$database"
+  sudo -u postgres pg_dump --format=custom "$database" > "$staging/postgresql/$database.dump"
 done < <(sudo -u postgres psql -Atc "select datname from pg_database where datistemplate = false")
 
 if command -v gitlab-backup >/dev/null; then
-  gitlab-backup create CRON=1
+  gitlab_backup_id="bootstrap-restic-$(date -u +%Y%m%dT%H%M%SZ)"
+  gitlab-backup create BACKUP="$gitlab_backup_id" CRON=1
   install -d -m 0700 "$staging/gitlab"
-  latest_gitlab_backup="$(find /var/opt/gitlab/backups -maxdepth 1 -type f -name '*_gitlab_backup.tar' -print0 | xargs -0 ls -1t | head -1)"
-  test -n "$latest_gitlab_backup"
-  cp "$latest_gitlab_backup" "$staging/gitlab/"
+  created_gitlab_backup="/var/opt/gitlab/backups/${gitlab_backup_id}_gitlab_backup.tar"
+  test -s "$created_gitlab_backup"
+  cp "$created_gitlab_backup" "$staging/gitlab/"
+  rm -f "$created_gitlab_backup"
   cp -a /etc/gitlab/gitlab-secrets.json /etc/gitlab/gitlab.rb "$staging/gitlab/"
+  cp -a /etc/bootstrap-home-infra/gitlab-db-password /etc/bootstrap-home-infra/gitlab-oidc-secret "$staging/gitlab/"
   cp -a /etc/gitlab-runner "$staging/gitlab/" 2>/dev/null || true
   dpkg-query -W gitlab-ce gitlab-runner > "$staging/gitlab/package-versions"
 fi
@@ -50,16 +54,29 @@ find /var/lib/bootstrap-home-infra -maxdepth 2 -type f \
 if [ -s /etc/bootstrap-home-infra/vault-backup-token ]; then
   export VAULT_TOKEN="$(< /etc/bootstrap-home-infra/vault-backup-token)"
   export VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true
-  vault token renew -self >/dev/null
+  vault token renew >/dev/null
   vault operator raft snapshot save "$staging/vault.snap"
   unset VAULT_TOKEN
 else
-  complete=false
+  vault_complete=false
   printf '%s\n' "incomplete: Vault snapshot unavailable while sealed or uncredentialed" > "$staging/INCOMPLETE"
 fi
 
-snapshot="$(restic backup --json "$staging" | awk -F'"' '/snapshot_id/{print $4}' | tail -1)"
-restic snapshots --json | grep -q "$snapshot"
+(cd "$staging" && find . -type f ! -name MANIFEST.sha256 -print0 | sort -z | xargs -0 sha256sum > MANIFEST.sha256)
+
+snapshot="$(restic backup --json "$staging" | python3 -c '
+import json
+import sys
+
+snapshot_id = ""
+for line in sys.stdin:
+    message = json.loads(line)
+    snapshot_id = message.get("snapshot_id", snapshot_id)
+print(snapshot_id)
+')"
+test -n "$snapshot"
+snapshot_inventory="$(restic snapshots --json)"
+grep -Fq "$snapshot" <<<"$snapshot_inventory"
 
 if [ -f /etc/bootstrap-home-infra/backup/retention-approved ]; then
   restic forget \
@@ -82,5 +99,6 @@ if [ {{ (backup_full_check_interval == 'monthly') | ternary('1', '0') }} -eq 1 ]
   restic check --read-data
 fi
 
+complete="$vault_complete"
 printf 'snapshot=%s complete=%s finished=%s\n' "$snapshot" "$complete" "$(date -u +%FT%TZ)" > "$state/backup-status"
 test "$complete" = true

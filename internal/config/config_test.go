@@ -280,6 +280,19 @@ func TestLoad_ACMEServerURL(t *testing.T) {
 	})
 }
 
+func TestLoad_ACMETestTrustOverrides(t *testing.T) {
+	t.Setenv("ACME_CA_CERT_URL", "http://harness.test/pebble.minica.pem")
+	t.Setenv("ACME_ISSUING_CA_CERT_URL", "https://pebble:15000/roots/0")
+	t.Setenv("ACME_SERVER_HOST_IP", "10.0.2.2")
+	rc, err := Load(filepath.Join(t.TempDir(), "missing.yaml"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.ACMECACertURL != "http://harness.test/pebble.minica.pem" || rc.ACMEIssuingCACertURL != "https://pebble:15000/roots/0" || rc.ACMEServerHostIP != "10.0.2.2" {
+		t.Fatalf("ACME trust overrides not loaded: API_CA=%q issuing_CA=%q host_ip=%q", rc.ACMECACertURL, rc.ACMEIssuingCACertURL, rc.ACMEServerHostIP)
+	}
+}
+
 func TestLoad_ParsesValidYAML(t *testing.T) {
 	content := `
 target_host: 10.0.0.1

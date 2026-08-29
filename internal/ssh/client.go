@@ -145,6 +145,29 @@ func (c *Client) WriteFile(path string, content []byte, mode os.FileMode) error 
 	return nil
 }
 
+// WriteFileSudo streams protected content into a root-owned destination over
+// the existing authenticated session. The content is never placed in a command
+// argument or an unprivileged controller-side temporary file, and the final
+// replacement is atomic.
+func (c *Client) WriteFileSudo(path string, content []byte, mode os.FileMode) error {
+	session, err := c.client.NewSession()
+	if err != nil {
+		return fmt.Errorf("creating privileged SSH upload session: %w", err)
+	}
+	defer session.Close()
+
+	session.Stdin = bytes.NewReader(content)
+	command := fmt.Sprintf(
+		`set -e; destination=%q; temporary="${destination}.tmp.$$"; trap 'sudo rm -f "$temporary"' EXIT; sudo tee "$temporary" >/dev/null; sudo chmod %04o "$temporary"; sudo mv -f "$temporary" "$destination"; trap - EXIT`,
+		path,
+		mode.Perm(),
+	)
+	if output, err := session.CombinedOutput(command); err != nil {
+		return fmt.Errorf("uploading protected file with sudo: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
 // RunWithStdin executes a remote command while streaming sensitive input over
 // the SSH channel rather than embedding it in the remote command line.
 func (c *Client) RunWithStdin(command string, input []byte) (stdout, stderr string, err error) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,9 @@ import (
 	"os"
 	"strings"
 )
+
+//go:embed pebble.minica.pem
+var pebbleCA []byte
 
 type CFResponse struct {
 	Success  bool          `json:"success"`
@@ -48,6 +52,10 @@ func main() {
 		}
 
 		switch {
+		case r.Method == "GET" && r.URL.Path == "/pebble.minica.pem":
+			w.Header().Set("Content-Type", "application/x-pem-file")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(pebbleCA)
 		case r.Method == "GET" && strings.Contains(r.URL.Path, "/zones"):
 			respond(w, 200, []map[string]string{{"id": "fake-zone-id-12345", "name": "test"}})
 		case r.Method == "POST" && strings.Contains(r.URL.Path, "/dns_records"):

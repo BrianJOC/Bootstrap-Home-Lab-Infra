@@ -396,15 +396,15 @@
       <a href="#stages">Stage readiness</a><a href="#gaps">Remaining gaps</a><a href="#decisions">Settled decisions</a>
       <a href="#evidence">Evidence</a><a href="#next">Next review</a>
     </nav>
-    <div class="stamp">SOURCE REVIEW<br>Revalidated 22 August 2026<br>Local working tree</div>
+    <div class="stamp">SOURCE + INTEGRATION REVIEW<br>Revalidated 27 August 2026<br>Local working tree</div>
   </aside>
   <main>
     <section class="hero" id="summary">
-      <p class="eyebrow">Corrected implementation assessment</p>
-      <h1>The executable spine is repaired. Live proof and ownership convergence remain.</h1>
-      <p class="lede">The earlier report was stale: it continued to list already-resolved policies and repaired P0 defects as open issues. This revision uses three separate states—decision accepted, source implemented, and live acceptance proven—so an accepted operating policy can no longer reappear as an unanswered design question.</p>
-      <div class="badges"><span class="badge good">0 open P0 blockers</span><span class="badge good">core source gates green</span><span class="badge warn">5 P1 acceptance/convergence items</span><span class="badge">no live host changed</span></div>
-      <div class="tldr"><strong>TL;DR</strong><p>The repository now builds and has executable paths for strict configuration, pinned SSH trust, Stage 8, GitLab state handoff, Restic backup/recovery, certificate renewal, upgrades, constrained observability, paging, Vault recovery, and controller recovery. Docker mocks and the storage and Vault roles now pass disposable-QEMU tests, but the remaining P1 work still includes ownership convergence and a complete fresh-install/resume/recovery run before using the intended host.</p></div>
+      <p class="eyebrow">Implementation and acceptance assessment</p>
+      <h1>The bootstrap, handoff, and destructive recovery spine now work in a disposable lab.</h1>
+      <p class="lede">Resource ownership is converged, the full ARM64 bootstrap reached GitLab handoff, and rerun, interruption, reboot, adoption, manifest-backed backup, destructive GitLab restore, explicit unfreeze, and controller-recovery paths were exercised. This report continues to separate accepted decisions, implemented source, disposable proof, and external hardware acceptance.</p>
+      <div class="badges"><span class="badge good">0 open P0 blockers</span><span class="badge good">0 open P1 source blockers</span><span class="badge good">source gates green</span><span class="badge good">full QEMU + recovery proven</span><span class="badge">no real homelab changed</span></div>
+      <div class="tldr"><strong>TL;DR</strong><p>The repository is in a push-ready greenfield state after final validation: all platform stages install, split Terraform state is verified and handed to GitLab, post-handoff local mutation is blocked, the final Restic manifest verifies, GitLab full-loss restore and explicit unfreeze work, Vault reboot recovery works, and reviewed server adoption now models registration, commissioning, and OS deployment. No accepted backup, certificate, reboot, upgrade, observability, or paging decision is being reclassified as an issue. The remaining work is deliberate external acceptance plus a P2 design/implementation review for post-deployment SSH confirmation before automatic k3s join.</p></div>
     </section>
 
     <section id="goal">
@@ -435,23 +435,21 @@
         <div class="stage"><small>0 / 0B</small><b>Config + storage</b><p>Strict schema, wizard, trust, persistence, disk safety.</p></div>
         <div class="stage"><small>1–3</small><b>DNS · TLS · Vault</b><p>Runtime roles and recovery paths implemented.</p></div>
         <div class="stage"><small>4–5</small><b>Postgres · Authentik</b><p>Correct final-database order; no migration branch.</p></div>
-        <div class="stage partial"><small>6</small><b>GitLab handoff</b><p>Saved plan and verified state migration implemented; live proof pending.</p></div>
-        <div class="stage partial"><small>7–8</small><b>MAAS · k3s</b><p>Safe defaults and k3s path exist; API ownership and live proof remain.</p></div>
-        <div class="stage partial"><small>9</small><b>Lifecycle</b><p>Backup, maintenance, telemetry, paging, and controller bundle implemented; drills pending.</p></div>
+        <div class="stage"><small>6</small><b>GitLab handoff</b><p>Saved plans, API objects, Runner, JWT, and every remote state verified.</p></div>
+        <div class="stage"><small>7–8</small><b>MAAS · k3s</b><p>MAAS API and initial k3s passed; reviewed node commission/deploy is schema-valid; physical execution remains.</p></div>
+        <div class="stage"><small>9</small><b>Lifecycle</b><p>Trial mode, manifest restore, GitLab recovery, maintenance, telemetry, and controller bundle passed.</p></div>
       </div>
     </section>
 
     <section id="gaps">
-      <p class="eyebrow">Current gap register</p><h2>What is genuinely still P1 or P2</h2>
-      <p class="intro">There are no known source-level P0 blockers. P1 now means the product outcome still needs convergence or live acceptance—not that its policy is undecided.</p>
+      <p class="eyebrow">Current gap register</p><h2>What genuinely remains after closing P0 and P1 source work</h2>
+      <p class="intro">There are no known source-level P0 or P1 blockers. Ownership, full-run, reboot, backup, destructive GitLab recovery, adoption MR, and MAAS deployment gaps are closed by implementation and proportionate disposable evidence. The rows below are P2 improvements or external acceptance boundaries—not reopened product decisions.</p>
       <div class="table"><table><thead><tr><th>State</th><th>Gap</th><th>Current evidence</th><th>Exit condition</th></tr></thead><tbody>
-        <tr><td><span class="state open">P1 converge</span></td><td><b>Finish single-owner API boundaries</b></td><td>GitLab and k3s are connected to Terraform. Technitium records, Vault auth/policies, Authentik OIDC, and MAAS networking still have duplicate or disconnected imperative/declarative paths.</td><td>Stage-aligned roots create these objects once; duplicate Ansible/Go writes are removed; no secret token is stored in a <code>null_resource</code> trigger.</td></tr>
-        <tr><td><span class="state proof">P1 prove</span></td><td><b>Fresh install, rerun, and interruption drill</b></td><td>All source gates pass. Storage and Vault pass full Molecule converge, idempotence, and verification sequences on QEMU, but no complete bootstrap or interrupted-resume artifact exists yet.</td><td>Fresh VM run, no-change rerun, and interrupted resume pass with secrets absent from logs/arguments.</td></tr>
-        <tr><td><span class="state proof">P1 prove</span></td><td><b>GitLab and state-loss recovery drill</b></td><td>State migration compares lineage/serial and keeps local rollback state; backup/checkpoint/freeze paths exist.</td><td>Disposable GitLab loss and state recovery prove authoritative remote state, rollback copy, checkpoint, and freeze behavior.</td></tr>
-        <tr><td><span class="state proof">P1 prove</span></td><td><b>Backup and blank-laptop recovery drill</b></td><td>Restic roles/timers, isolated restore command, encrypted controller bundle, manual Vault commands, and native artifacts exist.</td><td>TrueNAS and optional USB checks pass; isolated restore, GitLab restore, and new-controller audit/adoption are demonstrated.</td></tr>
-        <tr><td><span class="state open">P1 complete</span></td><td><b>Finish reviewed server adoption</b></td><td><code>adopt-server</code> now performs a pinned-SSH read-only inventory and can write a protected draft. BMC/IPMI discovery, schema-complete MAAS/node definitions, commit, and GitLab MR creation are not connected.</td><td>The command generates validated definitions, shows the exact diff, obtains approval, opens a draft MR, and leaves provisioning to the reviewed pipeline.</td></tr>
+        <tr><td><span class="state partial">P2 review</span></td><td><b>Post-deployment SSH confirmation and k3s join</b></td><td>The MR pipeline now applies both <code>maas_machine</code> registration/commissioning and <code>maas_instance</code> OS deployment. The generated root is schema-validated. A reinstalled host has a new SSH identity, and silently accepting it in CI would contradict the settled fingerprint policy.</td><td>Design an in-workflow confirmation that presents the replacement fingerprint, records explicit intent, and only then runs the k3s agent join; prove it with a second node.</td></tr>
+        <tr><td><span class="state partial">P2 / external</span></td><td><b>TrueNAS, USB, UniFi, and provider paging acceptance</b></td><td>Policies, guards, target-local compute boundary, UniFi guide, provider formats, and local-only Restic restore are implemented. No real external system was mutated.</td><td>Run deliberate operator-approved hardware/network drills: NAS loss and identity mismatch, USB copy/unmount, network-by-network DNS rollout/rollback, and one selected paging provider.</td></tr>
+        <tr><td><span class="state partial">P2 / external</span></td><td><b>Physical PXE and x86_64 acceptance</b></td><td>ARM64 controller/QEMU integration passed and the Canonical MAAS 2.8.0 schema accepts the generated commission/deploy root. User-mode QEMU cannot faithfully prove a real VLAN PXE boot or BMC power cycle.</td><td>Merge a reviewed adoption MR for an explicitly authorized spare node; observe commission, Ubuntu deployment, reboot, and new fingerprint on the lab VLAN. Repeat the core install on x86_64.</td></tr>
         <tr><td><span class="state partial">P2</span></td><td><b>Complete supply-chain pinning</b></td><td>k3s and several services are pinned; some containers/packages/providers still use broad constraints or tags.</td><td>Every downloaded artifact follows an explicit pin, checksum/signature, update, and rollback policy.</td></tr>
-        <tr><td><span class="state partial">P2</span></td><td><b>Expand integration coverage</b></td><td>Go tests, Docker mocks, and storage/Vault Molecule scenarios pass; the remaining role scenarios and full controller paths are not yet in CI.</td><td>CI runs selected Molecule tests plus representative single/secondary-disk and disabled-feature cases.</td></tr>
+        <tr><td><span class="state partial">P2</span></td><td><b>Expand repeatable CI integration coverage</b></td><td>The full controller, interrupted resume, reboot, trial mode, local Restic restore, and adoption were proven manually against the disposable ARM64 stack; only a smaller subset is automated in CI.</td><td>Promote representative full, secondary-disk, backup-disabled, recovery, and adoption mock cases into bounded CI jobs.</td></tr>
         <tr><td><span class="state partial">P2</span></td><td><b>Advanced wizard editing</b></td><td>Accepted defaults round-trip and every option is available in strict YAML; the first-run flow intentionally asks only essential questions.</td><td>Add an optional advanced screen for backup intervals, maintenance windows, retention, and paging thresholds without burdening trial users.</td></tr>
       </tbody></table></div>
     </section>
@@ -472,22 +470,25 @@
     </section>
 
     <section id="evidence">
-      <p class="eyebrow">Evidence from this checkout</p><h2>Source revalidated 22 August; disposable integration exercised 29 July</h2>
+      <p class="eyebrow">Evidence from this checkout</p><h2>Source and ARM64 disposable integration revalidated 27 August</h2>
       <div class="grid checks">
         <div class="check"><b>✓ Conflict scan</b><small>No markers</small></div><div class="check"><b>✓ Go format</b><small>Clean</small></div>
         <div class="check"><b>✓ Go tests</b><small>Project packages</small></div><div class="check"><b>✓ Go build/vet</b><small>Pass</small></div>
         <div class="check"><b>✓ Terraform fmt</b><small>Recursive</small></div><div class="check"><b>✓ Ansible syntax</b><small>Full site</small></div>
         <div class="check"><b>✓ Terraform validate</b><small>Every root</small></div><div class="check"><b>✓ Ansible lint</b><small>Production profile</small></div>
-        <div class="check"><b>✓ Docker mocks</b><small>Build and start</small></div><div class="check"><b>✓ QEMU Molecule</b><small>Storage + Vault idempotent</small></div>
+        <div class="check"><b>✓ Full QEMU</b><small>All stages + handoffs</small></div><div class="check"><b>✓ No-change rerun</b><small>All owned stages skip</small></div>
+        <div class="check"><b>✓ Resume + reboot</b><small>Manual unseal/reconcile</small></div><div class="check"><b>✓ Restic restore</b><small>2.016 GiB · 30 hashes</small></div>
+        <div class="check"><b>✓ GitLab loss restore</b><small>Exact commit · 8 states · unfreeze</small></div><div class="check"><b>✓ Adoption MR</b><small>Refresh + duplicate guard</small></div>
+        <div class="check"><b>✓ MAAS generated IaC</b><small>2.8.0 schema valid</small></div><div class="check"><b>✓ Controller bundle</b><small>Verified isolated open</small></div>
       </div>
-      <div class="note"><b>Evidence boundary:</b> Terraform providers, local Docker mocks, and two role-level QEMU/Molecule paths were exercised. The complete bootstrap, GitLab/Authentik/MAAS live APIs, recovery drills, TrueNAS, UniFi, and the intended target host were not exercised. Those remain proof work, not unresolved policy.</div>
+      <div class="note"><b>Evidence boundary:</b> All service APIs, GitLab state handoff, local paging-disabled observability, destructive GitLab recovery, and restore flows were exercised only in the repository-owned QEMU/mocks. TrueNAS, USB, UniFi, an external notification provider, x86_64, a second commissioned node, and the intended homelab host were not changed. Those are explicitly listed acceptance boundaries, not silently claimed as proven.</div>
     </section>
 
     <section id="next">
-      <p class="eyebrow">Collaborative review sequence</p><h2>Recommended next working session</h2>
-      <div class="next"><div class="num">1</div><div><h3>Converge resource ownership</h3><p>Start with Technitium because its token-bearing <code>null_resource</code> is the clearest security and lifecycle conflict; then Vault, Authentik, and MAAS.</p></div></div>
-      <div class="next"><div class="num">2</div><div><h3>Run the disposable VM acceptance suite</h3><p>Prove first run, second run, interruption, disabled backup/paging, and strict host-key replacement before touching the intended server.</p></div></div>
-      <div class="next"><div class="num">3</div><div><h3>Run recovery drills against disposable data</h3><p>Exercise Restic restore, Vault reboot reconciliation, GitLab loss/state recovery, and blank-laptop controller adoption; attach evidence to the docs.</p></div></div>
+      <p class="eyebrow">Remaining review sequence</p><h2>No blocking implementation session remains</h2>
+      <div class="next"><div class="num">1</div><div><h3>Review the post-deploy trust handoff</h3><p>Choose how GitLab should pause and present the new OS fingerprint before the k3s join job. Keep the join token out of Git and Terraform state.</p></div></div>
+      <div class="next"><div class="num">2</div><div><h3>Schedule physical adoption acceptance</h3><p>Only with explicit authority, use a spare node on the MAAS-enabled lab VLAN to prove PXE commission/deploy and the confirmed k3s join.</p></div></div>
+      <div class="next"><div class="num">3</div><div><h3>Schedule other real-system acceptance deliberately</h3><p>Validate the chosen TrueNAS mount, optional USB repository, selected free pager, and network-by-network UniFi DNS rollout without using the NAS as compute.</p></div></div>
     </section>
     <footer>Generated from the local repository checkout. This report intentionally distinguishes design acceptance, source implementation, and live proof.</footer>
   </main>

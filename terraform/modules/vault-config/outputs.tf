@@ -12,8 +12,3 @@ output "bootstrap_policy_name" {
   description = "Name of the bootstrap Vault policy"
   value       = vault_policy.bootstrap.name
 }
-
-output "oidc_auth_path" {
-  description = "Mount path of the OIDC auth method"
-  value       = vault_jwt_auth_backend.oidc.path
-}

@@ -7,7 +7,7 @@ services:
       MOCK_CF_PORT: "8080"
 
   pebble:
-    image: ghcr.io/letsencrypt/pebble:latest
+    image: ghcr.io/letsencrypt/pebble:2.10.1
     ports:
       - "14000:14000"
       - "15000:15000"
@@ -21,7 +21,7 @@ services:
       - challtestsrv
 
   challtestsrv:
-    image: ghcr.io/letsencrypt/pebble-challtestsrv:latest
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:2.10.1
     ports:
       - "8055:8055"
       - "8053:8053/udp"

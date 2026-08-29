@@ -1,12 +1,6 @@
-variable "maas_api_url" {
+variable "internal_domain" {
   type        = string
-  description = "MAAS API endpoint URL (e.g. http://maas.home.example.com:5240/MAAS)"
-}
-
-variable "maas_api_key" {
-  type        = string
-  sensitive   = true
-  description = "MAAS API key (consumer_key:token_key:token_secret format)"
+  description = "Internal domain used for the MAAS site name."
 }
 
 variable "lab_subnet" {

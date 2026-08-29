@@ -1,9 +1,8 @@
 ---
 - name: Wait for GitLab to become healthy
   ansible.builtin.uri:
-    url: "https://localhost/-/health"
+    url: "http://127.0.0.1:{{ gitlab_port_http }}/-/health"
     method: GET
-    validate_certs: false
     status_code: [200]
   register: gitlab_health
   retries: "{{ (gitlab_health_timeout / gitlab_health_interval) | int }}"
@@ -23,13 +22,49 @@
   become: false
   register: gitlab_token_file
 
+- name: Read the existing controller GitLab bootstrap token
+  ansible.builtin.slurp:
+    src: "{{ lookup('env', 'HOME') }}/.bootstrap/gitlab-api-token"
+  delegate_to: localhost
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  become: false
+  register: gitlab_existing_token_slurp
+  no_log: true
+  when: gitlab_token_file.stat.exists
+
+- name: Validate the existing GitLab bootstrap token
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ gitlab_port_http }}/api/v4/user"
+    method: GET
+    headers:
+      PRIVATE-TOKEN: "{{ gitlab_existing_token_slurp.content | b64decode | trim }}"
+    status_code: [200, 401, 403]
+  register: gitlab_existing_token_validation
+  no_log: true
+  when: gitlab_token_file.stat.exists
+
+- name: Decide whether the GitLab bootstrap token must be refreshed
+  ansible.builtin.set_fact:
+    gitlab_token_refresh_required: >-
+      {{
+        (not gitlab_token_file.stat.exists) or
+        (gitlab_existing_token_validation.status | default(0) != 200)
+      }}
+  no_log: true
+
 - name: Mint a short-lived GitLab bootstrap API token
   ansible.builtin.command:
     argv:
       - gitlab-rails
       - runner
       - >-
-        t = User.find(1).personal_access_tokens.create!(
+        user = User.find(1);
+        user.personal_access_tokens.where(
+          name: 'bootstrap-terraform-token'
+        ).destroy_all;
+        t = user.personal_access_tokens.create!(
           name: 'bootstrap-terraform-token',
           scopes: ['api'],
           expires_at: 2.days.from_now
@@ -38,9 +73,9 @@
   changed_when: true
   failed_when: >
     gitlab_token_create.rc != 0 or
-    not (gitlab_token_create.stdout | trim is match('^glpat-[A-Za-z0-9_-]{16,128}$'))
+    not (gitlab_token_create.stdout | trim is match('^glpat-[A-Za-z0-9_.-]{16,128}$'))
   no_log: true
-  when: not gitlab_token_file.stat.exists
+  when: gitlab_token_refresh_required | bool
 
 - name: Store the GitLab bootstrap API token on the controller
   ansible.builtin.copy:
@@ -53,7 +88,7 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   become: false
   no_log: true
-  when: not gitlab_token_file.stat.exists
+  when: gitlab_token_refresh_required | bool
 
 - name: Read the GitLab bootstrap API token
   ansible.builtin.slurp:

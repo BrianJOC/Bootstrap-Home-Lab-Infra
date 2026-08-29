@@ -25,5 +25,8 @@
 - name: Issue TLS certificate
   ansible.builtin.include_tasks: configure.yml
 
+- name: Configure shared TLS ingress
+  ansible.builtin.include_tasks: ingress.yml
+
 - name: Verify TLS certificate
   ansible.builtin.include_tasks: verify.yml

@@ -50,11 +50,12 @@ fmt-check:
 tf-validate:
     #!/usr/bin/env bash
     set -euo pipefail
-    for directory in terraform/environments/bootstrap terraform/modules/*; do
+    for directory in terraform/environments/bootstrap/* terraform/modules/*; do
         [ -d "$directory" ] || continue
         terraform -chdir="$directory" init -backend=false -input=false
         terraform -chdir="$directory" validate
     done
+    scripts/validate-generated-iac.sh
 
 # Syntax-check the complete Ansible stage chain.
 syntax-check-all:
@@ -97,13 +98,41 @@ vm-up arch="aarch64" accelerator="hvf":
     qemu-img create -f qcow2 -b "$(realpath "$BASE")" -F qcow2 "$SNAP"
     if [ "{{arch}}" = "aarch64" ]; then
         qemu-system-aarch64 -machine virt -cpu host -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
-          -accel {{accelerator}} -m 2048 -drive if=virtio,file="$SNAP",format=qcow2 \
-          -netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 \
+          -accel {{accelerator}} -m 8192 -drive if=virtio,file="$SNAP",format=qcow2 \
+          -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::15380-:5380,hostfwd=tcp::18200-:8200,hostfwd=tcp::19000-:9000,hostfwd=tcp::18443-:443,hostfwd=tcp::15240-:5240,hostfwd=tcp::16443-:6443 -device virtio-net-pci,netdev=net0 \
           -display none -daemonize -pidfile "$PID_FILE"
     else
-        qemu-system-x86_64 -machine q35 -accel {{accelerator}} -m 2048 \
+        qemu-system-x86_64 -machine q35 -accel {{accelerator}} -m 8192 \
           -drive if=virtio,file="$SNAP",format=qcow2 \
-          -netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 \
+          -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::15380-:5380,hostfwd=tcp::18200-:8200,hostfwd=tcp::19000-:9000,hostfwd=tcp::18443-:443,hostfwd=tcp::15240-:5240,hostfwd=tcp::16443-:6443 -device virtio-net-pci,netdev=net0 \
+          -display none -daemonize -pidfile "$PID_FILE"
+    fi
+    for _ in $(seq 1 60); do
+        if ssh-keyscan -p 2222 localhost 2>/dev/null | ssh-keygen -lf - >/dev/null 2>&1; then
+            echo "VM SSH identity is available."
+            exit 0
+        fi
+        sleep 1
+    done
+    echo "VM SSH did not become ready" >&2
+    exit 1
+
+# Resume an existing disposable snapshot after a deliberate interruption.
+vm-resume arch="aarch64" accelerator="hvf":
+    #!/usr/bin/env bash
+    SNAP="test/images/run-snapshot.qcow2"
+    PID_FILE="${TMPDIR:-/tmp}/bootstrap-home-infra-test-vm.pid"
+    test -f "$SNAP" || { echo "missing $SNAP; run just vm-up first" >&2; exit 1; }
+    test ! -f "$PID_FILE" || { echo "VM PID file already exists: $PID_FILE" >&2; exit 1; }
+    if [ "{{arch}}" = "aarch64" ]; then
+        qemu-system-aarch64 -machine virt -cpu host -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+          -accel {{accelerator}} -m 8192 -drive if=virtio,file="$SNAP",format=qcow2 \
+          -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::15380-:5380,hostfwd=tcp::18200-:8200,hostfwd=tcp::19000-:9000,hostfwd=tcp::18443-:443,hostfwd=tcp::15240-:5240,hostfwd=tcp::16443-:6443 -device virtio-net-pci,netdev=net0 \
+          -display none -daemonize -pidfile "$PID_FILE"
+    else
+        qemu-system-x86_64 -machine q35 -accel {{accelerator}} -m 8192 \
+          -drive if=virtio,file="$SNAP",format=qcow2 \
+          -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::15380-:5380,hostfwd=tcp::18200-:8200,hostfwd=tcp::19000-:9000,hostfwd=tcp::18443-:443,hostfwd=tcp::15240-:5240,hostfwd=tcp::16443-:6443 -device virtio-net-pci,netdev=net0 \
           -display none -daemonize -pidfile "$PID_FILE"
     fi
     for _ in $(seq 1 60); do
@@ -129,15 +158,15 @@ vm-up-ssd arch="aarch64" accelerator="hvf":
     qemu-img create -f qcow2 "$SSD" 2G
     if [ "{{arch}}" = "aarch64" ]; then
         qemu-system-aarch64 -machine virt -cpu host -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
-          -accel {{accelerator}} -m 2048 -drive if=virtio,file="$SNAP",format=qcow2 \
+          -accel {{accelerator}} -m 8192 -drive if=virtio,file="$SNAP",format=qcow2 \
           -drive if=virtio,file="$SSD",format=qcow2 \
-          -netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 \
+          -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::15380-:5380,hostfwd=tcp::18200-:8200,hostfwd=tcp::19000-:9000,hostfwd=tcp::18443-:443,hostfwd=tcp::15240-:5240,hostfwd=tcp::16443-:6443 -device virtio-net-pci,netdev=net0 \
           -display none -daemonize -pidfile "$PID_FILE"
     else
-        qemu-system-x86_64 -machine q35 -accel {{accelerator}} -m 2048 \
+        qemu-system-x86_64 -machine q35 -accel {{accelerator}} -m 8192 \
           -drive if=virtio,file="$SNAP",format=qcow2 \
           -drive if=virtio,file="$SSD",format=qcow2 \
-          -netdev user,id=net0,hostfwd=tcp::2222-:22 -device virtio-net-pci,netdev=net0 \
+          -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::15380-:5380,hostfwd=tcp::18200-:8200,hostfwd=tcp::19000-:9000,hostfwd=tcp::18443-:443,hostfwd=tcp::15240-:5240,hostfwd=tcp::16443-:6443 -device virtio-net-pci,netdev=net0 \
           -display none -daemonize -pidfile "$PID_FILE"
     fi
     for _ in $(seq 1 60); do
@@ -162,11 +191,11 @@ vm-down:
     rm -f test/images/run-snapshot.qcow2 test/images/run-ssd-disk.qcow2
 
 # Generate strict single-disk test configuration.
-write-test-config domain="lab.test" ip="127.0.0.1":
+write-test-config domain="lab.test" ip="10.0.2.15":
     bash test/write-test-config.sh "{{domain}}" "{{ip}}"
 
 # Generate strict dual-disk test configuration.
-write-test-config-ssd domain="lab.test" ip="127.0.0.1":
+write-test-config-ssd domain="lab.test" ip="10.0.2.15":
     bash test/write-test-config.sh "{{domain}}" "{{ip}}" ssd
 
 # Start local Pebble and Cloudflare API mocks.
@@ -192,25 +221,37 @@ test-role-idempotent role:
 
 # Run one bootstrap stage against the QEMU VM.
 test-stage stage: build
-    ACME_SERVER_URL=https://127.0.0.1:14000/dir CLOUDFLARE_API_BASE_URL=http://127.0.0.1:8080 \
-      ./bin/bootstrap --headless --accept-new-host-key --stage "{{stage}}" \
+    ACME_SERVER_URL=https://pebble:14000/dir ACME_CA_CERT_URL=http://10.0.2.2:8080/pebble.minica.pem ACME_ISSUING_CA_CERT_URL=https://pebble:15000/roots/0 ACME_SERVER_HOST_IP=10.0.2.2 CLOUDFLARE_API_BASE_URL=http://10.0.2.2:8080 \
+      BOOTSTRAP_TECHNITIUM_API_URL=http://127.0.0.1:15380 BOOTSTRAP_VAULT_API_URL=https://127.0.0.1:18200 \
+      BOOTSTRAP_AUTHENTIK_API_URL=http://127.0.0.1:19000 BOOTSTRAP_GITLAB_API_URL=https://127.0.0.1:18443/api/v4/ \
+      BOOTSTRAP_GITLAB_BASE_URL=https://127.0.0.1:18443 BOOTSTRAP_MAAS_API_URL=http://127.0.0.1:15240/MAAS BOOTSTRAP_API_INSECURE=true \
+      ./bin/bootstrap --headless --accept-new-host-key --approve-terraform --stage "{{stage}}" \
       --config test/config.yaml --env test/.env
 
 # Run one stage with the secondary-disk test profile.
 test-stage-ssd stage: build
-    ACME_SERVER_URL=https://127.0.0.1:14000/dir CLOUDFLARE_API_BASE_URL=http://127.0.0.1:8080 \
-      ./bin/bootstrap --headless --accept-new-host-key --stage "{{stage}}" \
+    ACME_SERVER_URL=https://pebble:14000/dir ACME_CA_CERT_URL=http://10.0.2.2:8080/pebble.minica.pem ACME_ISSUING_CA_CERT_URL=https://pebble:15000/roots/0 ACME_SERVER_HOST_IP=10.0.2.2 CLOUDFLARE_API_BASE_URL=http://10.0.2.2:8080 \
+      BOOTSTRAP_TECHNITIUM_API_URL=http://127.0.0.1:15380 BOOTSTRAP_VAULT_API_URL=https://127.0.0.1:18200 \
+      BOOTSTRAP_AUTHENTIK_API_URL=http://127.0.0.1:19000 BOOTSTRAP_GITLAB_API_URL=https://127.0.0.1:18443/api/v4/ \
+      BOOTSTRAP_GITLAB_BASE_URL=https://127.0.0.1:18443 BOOTSTRAP_MAAS_API_URL=http://127.0.0.1:15240/MAAS BOOTSTRAP_API_INSECURE=true \
+      ./bin/bootstrap --headless --accept-new-host-key --approve-terraform --stage "{{stage}}" \
       --config test/config-ssd.yaml --env test/.env
 
 # Run the full single-disk bootstrap.
 test-bootstrap: build
-    ACME_SERVER_URL=https://127.0.0.1:14000/dir CLOUDFLARE_API_BASE_URL=http://127.0.0.1:8080 \
-      ./bin/bootstrap --headless --accept-new-host-key --config test/config.yaml --env test/.env
+    ACME_SERVER_URL=https://pebble:14000/dir ACME_CA_CERT_URL=http://10.0.2.2:8080/pebble.minica.pem ACME_ISSUING_CA_CERT_URL=https://pebble:15000/roots/0 ACME_SERVER_HOST_IP=10.0.2.2 CLOUDFLARE_API_BASE_URL=http://10.0.2.2:8080 \
+      BOOTSTRAP_TECHNITIUM_API_URL=http://127.0.0.1:15380 BOOTSTRAP_VAULT_API_URL=https://127.0.0.1:18200 \
+      BOOTSTRAP_AUTHENTIK_API_URL=http://127.0.0.1:19000 BOOTSTRAP_GITLAB_API_URL=https://127.0.0.1:18443/api/v4/ \
+      BOOTSTRAP_GITLAB_BASE_URL=https://127.0.0.1:18443 BOOTSTRAP_MAAS_API_URL=http://127.0.0.1:15240/MAAS BOOTSTRAP_API_INSECURE=true \
+      ./bin/bootstrap --headless --accept-new-host-key --approve-terraform --config test/config.yaml --env test/.env
 
 # Run the full secondary-disk bootstrap.
 test-bootstrap-ssd: build
-    ACME_SERVER_URL=https://127.0.0.1:14000/dir CLOUDFLARE_API_BASE_URL=http://127.0.0.1:8080 \
-      ./bin/bootstrap --headless --accept-new-host-key --config test/config-ssd.yaml --env test/.env
+    ACME_SERVER_URL=https://pebble:14000/dir ACME_CA_CERT_URL=http://10.0.2.2:8080/pebble.minica.pem ACME_ISSUING_CA_CERT_URL=https://pebble:15000/roots/0 ACME_SERVER_HOST_IP=10.0.2.2 CLOUDFLARE_API_BASE_URL=http://10.0.2.2:8080 \
+      BOOTSTRAP_TECHNITIUM_API_URL=http://127.0.0.1:15380 BOOTSTRAP_VAULT_API_URL=https://127.0.0.1:18200 \
+      BOOTSTRAP_AUTHENTIK_API_URL=http://127.0.0.1:19000 BOOTSTRAP_GITLAB_API_URL=https://127.0.0.1:18443/api/v4/ \
+      BOOTSTRAP_GITLAB_BASE_URL=https://127.0.0.1:18443 BOOTSTRAP_MAAS_API_URL=http://127.0.0.1:15240/MAAS BOOTSTRAP_API_INSECURE=true \
+      ./bin/bootstrap --headless --accept-new-host-key --approve-terraform --config test/config-ssd.yaml --env test/.env
 
 # Resume Stage 6, including saved-plan approval and verified GitLab state handoff.
 migrate-tf-state: build
@@ -232,6 +273,18 @@ backup-now: build
 backup-restore snapshot target: build
     ./bin/bootstrap backup restore --snapshot "{{snapshot}}" --target "{{target}}" --config config.yaml --env .env
 
+# Repair GitLab service state while keeping Terraform/GitOps frozen.
+recover-gitlab-service incident: build
+    ./bin/bootstrap recover gitlab --mode service --incident "{{incident}}" --config config.yaml --env .env
+
+# Destructively restore live GitLab only after typing the same incident ID twice.
+recover-gitlab-restore incident snapshot="latest": build
+    ./bin/bootstrap recover gitlab --mode restore --incident "{{incident}}" --snapshot "{{snapshot}}" --approve-restore "{{incident}}" --config config.yaml --env .env
+
+# Resume GitLab Runner and IaC only after the recovery verification gate passed.
+recover-gitlab-unfreeze incident: build
+    ./bin/bootstrap recover gitlab --unfreeze "{{incident}}" --config config.yaml --env .env
+
 # Inspect active certificate identity, expiry, and renewal timer.
 certificate-status: build
     ./bin/bootstrap certificate status --config config.yaml --env .env
@@ -239,3 +292,7 @@ certificate-status: build
 # Trigger staged renewal with validation, atomic activation, and rollback.
 certificate-renew: build
     ./bin/bootstrap certificate renew --config config.yaml --env .env
+
+# Serve the repository review with Hermit's pinned Python.
+report-serve port="8765":
+    bin/python -m http.server {{port}} --bind 127.0.0.1 --directory reports

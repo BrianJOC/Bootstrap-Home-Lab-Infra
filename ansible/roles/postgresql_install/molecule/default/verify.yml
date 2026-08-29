@@ -14,6 +14,19 @@
           - pg_service.status.ActiveState == "active"
         fail_msg: "PostgreSQL service is not active (state: {{ pg_service.status.ActiveState }})"
 
+    - name: Read effective PostgreSQL lock capacity
+      ansible.builtin.command:
+        cmd: psql -U postgres -tAc "SHOW max_locks_per_transaction"
+      become_user: postgres
+      register: pg_max_locks
+      changed_when: false
+
+    - name: Assert PostgreSQL lock capacity supports GitLab schema operations
+      ansible.builtin.assert:
+        that:
+          - pg_max_locks.stdout | int >= 256
+        fail_msg: "max_locks_per_transaction is too low for GitLab"
+
     - name: Check database authentik exists
       ansible.builtin.command:
         cmd: psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname='authentik'"

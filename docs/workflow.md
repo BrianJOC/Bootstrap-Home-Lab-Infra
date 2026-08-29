@@ -873,7 +873,7 @@ Produces:
 
 2. `[AUTO]` Check if MAAS is already running:
    - TCP check: `<target>:5240`
-   - HTTP check: `GET http://maas.home.<domain>:5240/MAAS/api/2.0/`
+   - HTTP check: `GET http://maas.home.<domain>:5240/MAAS/api/2.0/version/`
    - If responding: jump to step 6 (network config idempotency)
    - If not: continue
 
@@ -892,7 +892,7 @@ Produces:
    - TUI: `MAAS: installing...`
 
 5. `[AUTO]` Wait for MAAS API to become healthy:
-   - Poll `GET http://<target>:5240/MAAS/api/2.0/` every 10s; timeout 300s
+   - Poll `GET http://<target>:5240/MAAS/api/2.0/version/` every 10s; timeout 300s
    - Log every 60s: `[INFO] maas-wait: elapsed=Xs`
 
 6. `[AUTO]` Configure MAAS base settings:
@@ -1527,6 +1527,15 @@ The complete contract is in
 
 > Triggered by: `just adopt-server <ip>`
 
+Implementation record (2026-08-27): steps 1–9 are implemented and passed
+against the disposable GitLab, including automatic refresh of a revoked
+short-lived credential and duplicate-open-MR refusal. Steps 10–12 now have a
+schema-validated pipeline implementation using `maas_machine` for reviewed
+registration/commissioning and `maas_instance` for Ubuntu deployment; physical
+PXE execution remains external acceptance. Step 13 remains deliberately gated
+on confirmation of the replacement OS SSH fingerprint and must not yet be
+described as unattended automation.
+
 ### Prerequisites
 
 - Bootstrap is complete (GitLab running)
@@ -1552,7 +1561,7 @@ The complete contract is in
 7. `[AUTO]` Write `infrastructure/nodes/<hostname>.yaml` with collected metadata
    and provisioner
 8. `[AUTO]` Push branch to GitLab; open MR:
-   - MR title: `adopt: add node <hostname> (<ip>)`
+   - MR title: `Draft: adopt: add node <hostname> (<ip>)`
    - MR body: hardware summary table; BMC status; suggested cluster assignment
    - MR auto-assigned to admin user
 9. `[AUTO]` Emit MR URL to operator's terminal:
@@ -1566,7 +1575,8 @@ After operator reviews and merges MR:
 11. `[AUTO]` Terraform MAAS provider: creates machine record in MAAS with MAC
     address, architecture, BMC details (if present)
 12. `[AUTO]` MAAS commissions machine: PXE boots; hardware discovery; marks
-    as `Ready`
+    as `Ready`, then `maas_instance` allocates that exact hostname and deploys
+    the reviewed Ubuntu series
 13. `[AUTO]` If node definition references a cluster: Ansible role `k3s_install`
     runs to join node to the cluster
 14. `[AUTO]` Node appears in cluster: `kubectl get nodes` shows new node `Ready`

@@ -45,12 +45,26 @@
     owner: "1000"
     group: "1000"
 
+- name: Inspect Authentik Compose topology marker
+  ansible.builtin.stat:
+    path: "{{ authentik_data_dir }}/.compose-network-v1"
+  register: authentik_compose_topology
+
 - name: Template Authentik Docker Compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ authentik_data_dir }}/docker-compose.yml"
     mode: "0640"
-  notify: restart authentik
+  register: authentik_compose_template
+
+- name: Recreate Authentik project boundary after Compose topology changes
+  community.docker.docker_compose_v2:
+    project_src: "{{ authentik_data_dir }}"
+    state: absent
+    remove_volumes: false
+  when: >-
+    authentik_compose_template is changed or
+    not authentik_compose_topology.stat.exists
 
 - name: Template Authentik .env file
   ansible.builtin.template:
@@ -64,3 +78,11 @@
   community.docker.docker_compose_v2:
     project_src: "{{ authentik_data_dir }}"
     state: present
+
+- name: Record reconciled Authentik Compose topology
+  ansible.builtin.file:
+    path: "{{ authentik_data_dir }}/.compose-network-v1"
+    state: touch
+    mode: "0400"
+    modification_time: preserve
+    access_time: preserve

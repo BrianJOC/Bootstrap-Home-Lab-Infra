@@ -3,18 +3,22 @@ terraform {
   required_providers {
     maas = {
       source  = "canonical/maas"
-      version = "~> 2.8.0"
+      version = "2.8.0"
     }
   }
 }
 
-provider "maas" {
-  api_version = "2.0"
-  api_key     = var.maas_api_key
-  api_url     = var.maas_api_url
+# ── Network Topology ──────────────────────────────────────────────────────────
+
+resource "maas_configuration" "upstream_dns" {
+  key   = "upstream_dns"
+  value = var.dns_server
 }
 
-# ── Network Topology ──────────────────────────────────────────────────────────
+resource "maas_configuration" "site_name" {
+  key   = "maas_name"
+  value = "maas.${var.internal_domain}"
+}
 
 resource "maas_space" "homelab" {
   name = "homelab"

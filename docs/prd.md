@@ -1,7 +1,19 @@
 # PRD: bootstrap-home-infra
 
-> Status: Complete — all open questions resolved. Ready for workflow-architect.
-> Last updated: 2026-07-27
+> Status: Decisions complete; no known P0/P1 source blocker; external acceptance remains
+> Last updated: 2026-08-27
+
+Implementation note: the full single-host bootstrap, exclusive resource
+ownership, GitLab state handoff, rerun/resume, reboot reconciliation,
+manifest-backed backup/restore, destructive full GitLab recovery with explicit
+unfreeze, controller recovery, and adoption draft MR are proven on the ARM64
+disposable environment. Success criterion 21 is now integration verified.
+For criterion 6, the reviewed pipeline now models both MAAS
+registration/commissioning and the provider's separate OS deployment lifecycle;
+physical PXE proof and post-deployment SSH fingerprint confirmation remain
+external acceptance. Automatic k3s join deliberately does not bypass that
+accepted trust gate. Real TrueNAS, USB, UniFi, paging-provider, and physical
+node exercises require separate explicit authority.
 
 ---
 

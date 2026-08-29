@@ -1,0 +1,198 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+
+state=/var/lib/bootstrap-home-infra/gitlab-recovery
+freeze="$state/frozen"
+verified="$state/verified"
+evidence="$state/evidence"
+operation="${1:-}"
+
+install -d -m 0700 "$state" "$evidence"
+
+read_incident() {
+  IFS= read -r incident
+  [[ "$incident" =~ ^[a-z0-9][a-z0-9._-]{2,63}$ ]] || {
+    echo "invalid incident identifier" >&2
+    exit 2
+  }
+}
+
+freeze_gitlab() {
+  local reason="$1"
+  if [ -s "$freeze" ]; then
+    existing="$(awk -F= '$1 == "incident" { print $2 }' "$freeze")"
+    test "$existing" = "$incident" || {
+      echo "GitLab is already frozen for incident $existing" >&2
+      exit 1
+    }
+  else
+    printf 'incident=%s\nreason=%s\nfrozen_at=%s\n' \
+      "$incident" "$reason" "$(date -u +%FT%TZ)" > "$freeze"
+  fi
+  rm -f "$verified"
+  systemctl disable --now gitlab-runner.service 2>/dev/null || true
+}
+
+capture_diagnostics() {
+  local directory="$evidence/$incident"
+  install -d -m 0700 "$directory"
+  date -u +%FT%TZ > "$directory/captured-at"
+  dpkg-query -W gitlab-ce gitlab-runner > "$directory/package-versions" 2>&1 || true
+  gitlab-ctl status > "$directory/gitlab-ctl-status" 2>&1 || true
+  gitlab-rake gitlab:env:info > "$directory/gitlab-env-info" 2>&1 || true
+  journalctl -u gitlab-runsvdir.service -n 500 --no-pager > "$directory/gitlab-journal" 2>&1 || true
+  df -h > "$directory/disk-usage" 2>&1 || true
+}
+
+verify_gitlab() {
+  gitlab-ctl restart
+  for _ in $(seq 1 120); do
+    if curl --silent --fail --insecure https://127.0.0.1/-/health >/dev/null 2>&1; then
+      break
+    fi
+    sleep 2
+  done
+  curl --silent --show-error --fail --insecure https://127.0.0.1/-/health >/dev/null
+  gitlab-rake gitlab:check SANITIZE=true
+  gitlab-rake gitlab:doctor:secrets
+  gitlab-rake gitlab:git:fsck
+  gitlab-rails runner "require 'json'; project = Project.find_by_full_path('infrastructure/iac'); abort('critical IaC project is missing') unless project && project.repository.exists?; puts 'critical_project=' + project.full_path; puts 'critical_commit=' + project.repository.commit.id; states = Terraform::State.order(:name); abort('no Terraform states were recovered') if states.empty?; states.each { |state| data = JSON.parse(state.latest_version.file.read); abort('state metadata missing for ' + state.name) if data['lineage'].to_s.empty? || data['serial'].nil?; puts [state.name, data['lineage'], data['serial']].join(':') }" > "$evidence/$incident/gitlab-state-evidence"
+  printf 'incident=%s\nverified_at=%s\n' "$incident" "$(date -u +%FT%TZ)" > "$verified"
+  echo "GitLab recovery checks passed; automation remains frozen."
+  echo "Review evidence, then run: bootstrap recover gitlab --unfreeze $incident"
+}
+
+stop_gitlab_service_for_restore() {
+  local service="$1"
+  local service_status
+  gitlab-ctl stop "$service" || gitlab-ctl graceful-kill "$service" || true
+  service_status="$(gitlab-ctl status "$service" || true)"
+  if grep -q '^run:' <<<"$service_status"; then
+    gitlab-ctl graceful-kill "$service"
+    sleep 2
+  fi
+  service_status="$(gitlab-ctl status "$service" || true)"
+  grep -q '^down:' <<<"$service_status"
+}
+
+case "$operation" in
+  service)
+    read_incident
+    freeze_gitlab service
+    capture_diagnostics
+    gitlab-ctl reconfigure
+    verify_gitlab
+    ;;
+  restore)
+    read_incident
+    IFS= read -r snapshot
+    IFS= read -r approval
+    test "$approval" = "$incident" || {
+      echo "typed restore approval does not match incident" >&2
+      exit 2
+    }
+    if [ "$snapshot" != latest ]; then
+      [[ "$snapshot" =~ ^[0-9a-f]{8,64}$ ]] || {
+        echo "invalid Restic snapshot identifier" >&2
+        exit 2
+      }
+    fi
+    test -s /etc/bootstrap-home-infra/backup/primary.env || {
+      echo "no configured Restic recovery source; trial-mode copies cannot restore GitLab" >&2
+      exit 1
+    }
+    set -a
+    . /etc/bootstrap-home-infra/backup/primary.env
+    set +a
+    restic snapshots --json "$snapshot" >/dev/null
+
+    restore_root="$state/restore-$incident"
+    trap 'echo "recovery failed; GitLab remains frozen and staging is preserved at $restore_root" >&2' ERR
+    if [ -e "$restore_root" ]; then
+      existing_incident="$(awk -F= '$1 == "incident" { print $2 }' "$freeze" 2>/dev/null || true)"
+      test "$existing_incident" = "$incident" || {
+        echo "recovery staging exists without the matching active incident: $restore_root" >&2
+        exit 1
+      }
+      echo "Reusing preserved, preflighted recovery staging at $restore_root"
+      freeze_gitlab restore
+    else
+      install -d -m 0700 "$restore_root"
+      freeze_gitlab restore
+      capture_diagnostics
+      restic restore "$snapshot" --target "$restore_root"
+    fi
+
+    source_root="$(find "$restore_root" -mindepth 1 -maxdepth 4 -type d -name 'backup-staging.*' -print -quit)"
+    test -n "$source_root"
+    archive="$(find "$source_root/gitlab" -maxdepth 1 -type f -name '*_gitlab_backup.tar' -print -quit)"
+    test -s "$archive"
+    test -s "$source_root/gitlab/gitlab.rb"
+    test -s "$source_root/gitlab/gitlab-secrets.json"
+    test -s "$source_root/gitlab/package-versions"
+    test -s "$source_root/gitlab/gitlab-db-password"
+    test -f "$source_root/gitlab/gitlab-oidc-secret"
+    test -s "$source_root/postgresql/gitlab.dump"
+    test -s "$source_root/MANIFEST.sha256"
+    (cd "$source_root" && sha256sum --quiet --check MANIFEST.sha256)
+
+    expected_version="$(awk '$1 == "gitlab-ce" { print $2 }' "$source_root/gitlab/package-versions")"
+    installed_version="$(dpkg-query -W -f='${Version}' gitlab-ce)"
+    test -n "$expected_version"
+    if [ "$installed_version" != "$expected_version" ]; then
+      echo "GitLab package mismatch: installed=$installed_version backup=$expected_version" >&2
+      exit 1
+    fi
+    archive_bytes="$(stat -c %s "$archive")"
+    available_bytes="$(df --output=avail -B1 /var/opt/gitlab | tail -1 | tr -d ' ')"
+    test "$available_bytes" -gt "$archive_bytes"
+
+    install -m 0600 "$source_root/gitlab/gitlab.rb" /etc/gitlab/gitlab.rb
+    install -m 0600 "$source_root/gitlab/gitlab-secrets.json" /etc/gitlab/gitlab-secrets.json
+    install -m 0600 "$source_root/gitlab/gitlab-db-password" /etc/bootstrap-home-infra/gitlab-db-password
+    install -m 0600 "$source_root/gitlab/gitlab-oidc-secret" /etc/bootstrap-home-infra/gitlab-oidc-secret
+    gitlab-ctl reconfigure
+    stop_gitlab_service_for_restore puma
+    stop_gitlab_service_for_restore sidekiq
+    backup_id="$(basename "$archive" _gitlab_backup.tar)"
+    install -m 0600 "$archive" "/var/opt/gitlab/backups/${backup_id}_gitlab_backup.tar"
+    chown git:git "/var/opt/gitlab/backups/${backup_id}_gitlab_backup.tar"
+    gitlab-backup restore BACKUP="$backup_id" force=yes
+    rm -f "/var/opt/gitlab/backups/${backup_id}_gitlab_backup.tar"
+    verify_gitlab
+    trap - ERR
+    ;;
+  unfreeze)
+    read_incident
+    test -s "$freeze" || {
+      echo "GitLab is not frozen" >&2
+      exit 1
+    }
+    frozen_incident="$(awk -F= '$1 == "incident" { print $2 }' "$freeze")"
+    verified_incident="$(awk -F= '$1 == "incident" { print $2 }' "$verified" 2>/dev/null || true)"
+    test "$incident" = "$frozen_incident" || {
+      echo "incident does not match active freeze $frozen_incident" >&2
+      exit 1
+    }
+    test "$incident" = "$verified_incident" || {
+      echo "incident has not passed the recovery verification gate" >&2
+      exit 1
+    }
+    curl --silent --show-error --fail --insecure https://127.0.0.1/-/health >/dev/null
+    systemctl enable --now gitlab-runner.service
+    systemctl is-active --quiet gitlab-runner.service
+    mv "$freeze" "$evidence/$incident/freeze-closed"
+    mv "$verified" "$evidence/$incident/verification-closed"
+    printf 'unfrozen_at=%s\n' "$(date -u +%FT%TZ)" > "$evidence/$incident/unfrozen"
+    restore_root="$state/restore-$incident"
+    if [ -d "$restore_root" ]; then
+      rm -rf --one-file-system "$restore_root"
+    fi
+    echo "GitLab automation unfrozen for verified incident $incident."
+    ;;
+  *)
+    echo "usage: bootstrap-gitlab-recovery service|restore|unfreeze" >&2
+    exit 2
+    ;;
+esac

@@ -3,7 +3,14 @@
 
 external_url 'https://gitlab.{{ internal_domain }}'
 
-git_data_dirs({ "default" => { "path" => "{{ (service_data_root + '/gitlab') if service_data_root else '/var/opt/gitlab/git-data' }}" } })
+gitaly['configuration'] = {
+  storage: [
+    {
+      name: 'default',
+      path: '{{ (service_data_root + '/gitlab/repositories') if service_data_root else '/var/opt/gitlab/git-data/repositories' }}'
+    }
+  ]
+}
 
 # Disable bundled PostgreSQL — use shared instance
 postgresql['enable'] = false
@@ -12,11 +19,17 @@ gitlab_rails['db_host'] = '{{ bootstrap_server_ip }}'
 gitlab_rails['db_port'] = 5432
 gitlab_rails['db_database'] = 'gitlab'
 gitlab_rails['db_username'] = 'gitlab'
-gitlab_rails['db_password'] = ENV['GITLAB_DB_PASSWORD']
+gitlab_rails['db_password'] = File.read('/etc/bootstrap-home-infra/gitlab-db-password').strip
 
-# TLS configuration — wildcard cert from Stage 2 (lego stores as _.domain.crt)
-nginx['ssl_certificate'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.crt"
-nginx['ssl_certificate_key'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.key"
+# Shared host Nginx terminates wildcard TLS and forwards only over loopback.
+# GitLab still advertises its public HTTPS URL for callbacks and generated links.
+gitlab_rails['nginx']['listen_port'] = 8181
+gitlab_rails['nginx']['listen_https'] = false
+gitlab_rails['nginx']['redirect_http_to_https'] = false
+# GitLab always trusts both localhost families. Keep only the explicit IPv4
+# proxy here because Omnibus 19.3 renders an explicit IPv6 entry as a YAML
+# symbol, which Rails cannot pass to IPAddr.
+gitlab_rails['trusted_proxies'] = ['127.0.0.1/32']
 
 # Authentik OIDC SSO
 gitlab_rails['omniauth_enabled'] = true
@@ -41,7 +54,7 @@ gitlab_rails['omniauth_providers'] = [
       pkce: true,
       client_options: {
         identifier: '{{ gitlab_oidc_client_id | default("gitlab") }}',
-        secret: ENV['GITLAB_OIDC_SECRET'],
+        secret: File.read('/etc/bootstrap-home-infra/gitlab-oidc-secret').strip,
         redirect_uri: 'https://gitlab.{{ internal_domain }}/users/auth/openid_connect/callback'
       }
     }

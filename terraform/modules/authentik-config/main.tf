@@ -3,14 +3,9 @@ terraform {
   required_providers {
     authentik = {
       source  = "goauthentik/authentik"
-      version = "~> 2024.2.0" # patch-pinned to avoid breaking redirect_uris schema change in 2024.6+
+      version = "2024.2.0" # pinned to avoid the redirect_uris schema change in 2024.6+
     }
   }
-}
-
-provider "authentik" {
-  url   = var.authentik_url
-  token = var.authentik_token
 }
 
 # ── Data Sources ──────────────────────────────────────────────────────────────

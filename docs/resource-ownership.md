@@ -1,7 +1,7 @@
 # Resource Ownership and GitOps Handoff
 
-> Status: Accepted target state; implementation convergence in progress
-> Last updated: 2026-07-29
+> Status: Accepted target state; source and disposable integration converged
+> Last updated: 2026-08-26
 > Applies to: bootstrap stages, post-bootstrap GitLab pipelines, recovery, and day-2 changes
 
 ## Purpose
@@ -95,6 +95,8 @@ Terraform roots rather than one root that initializes every provider at once:
 terraform/environments/bootstrap/
   dns/          → state name: bootstrap-dns
   vault/        → state name: bootstrap-vault
+  vault-oidc/   → state name: bootstrap-vault-oidc
+  vault-gitlab/ → state name: bootstrap-vault-gitlab
   authentik/    → state name: bootstrap-authentik
   gitlab/       → state name: bootstrap-gitlab
   maas/         → state name: bootstrap-maas
@@ -138,11 +140,13 @@ while state is still local. Once GitLab and the project are healthy:
 3. Go runs `terraform init -migrate-state` one state at a time.
 4. Go verifies that GitLab can return the migrated state and that its serial and
    lineage match the local state.
-5. The local state remains authoritative and is not deleted when migration or
-   verification fails.
-6. After all states verify, the operator confirms the handoff.
-7. Only then are redundant local state files removed and the completion record
-   written.
+5. The local state remains authoritative when migration or verification fails.
+6. After remote lineage, serial, and payload equivalence verify, Go atomically
+   writes a handoff record and keeps the mode-`0600` local state as a protected
+   disaster-recovery snapshot.
+7. The handoff record is a hard ownership boundary: all local Terraform apply,
+   import, and migration entry points refuse mutation and direct day-2 work to
+   the GitLab pipeline.
 
 No import step is required on a clean bootstrap because Terraform created every
 Terraform-owned resource and has tracked it since creation.
@@ -174,15 +178,15 @@ This section deliberately separates an accepted decision from its executable
 state. An accepted target is not an open design question, but it can still have
 implementation or live-proof work.
 
-| Item | State on 2026-07-29 | Remaining work |
+| Item | State on 2026-08-26 | Remaining work |
 |---|---|---|
-| GitLab groups/projects/files have one Terraform owner | Implemented | Prove against a fresh GitLab |
-| Saved plans, interactive approval, and headless opt-in | Implemented and unit-tested | Exercise TUI plan approval in the VM drill |
-| Verified GitLab HTTP state migration with rollback copy | Implemented and unit-tested at helper level | Run against GitLab and record remote lineage/serial evidence |
+| GitLab groups/projects/files have one Terraform owner | Implemented and disposable-integration verified | Physical-homelab acceptance only |
+| Saved plans, interactive approval, and headless opt-in | Implemented and unit-tested | Optional interactive-TUI visual acceptance |
+| Verified GitLab HTTP state migration with rollback copy | Implemented and disposable-integration verified for every bootstrap state | Destructive full GitLab-loss drill remains |
 | GitLab imports removed from clean bootstrap | Implemented | Brownfield import remains a separate future workflow |
-| k3s host installation moved out of Terraform | Implemented | Prove install, rerun, Vault kubeconfig, and remote-state handoff |
-| Authentik OIDC objects have one Terraform owner | Not converged | Remove the bootstrap Ansible API creation only after the stage-aligned Terraform root supplies and persists client secrets |
-| Technitium zone/records have one owner | Not converged | Replace the token-bearing `null_resource` design and remove duplicate Ansible record ownership |
-| Vault mounts/policies/auth roles have one owner | Not converged | Split cycle-safe roots and retire the duplicate Go reconciliation writes |
-| MAAS network API objects have one Terraform owner | Not converged | Persist the bootstrap API key securely and invoke the stage-aligned plan after MAAS initialization |
-| Stage-aligned roots replace the monolithic bootstrap root | Partially implemented | GitLab and k3s are connected; DNS, Vault, Authentik, and MAAS remain |
+| k3s host installation moved out of Terraform | Implemented and disposable-integration verified | Multi-node physical acceptance remains |
+| Authentik OIDC objects have one Terraform owner | Converged and disposable-integration verified | None at source level |
+| Technitium zone/records have one owner | Converged and disposable-integration verified | None at source level |
+| Vault mounts/policies/auth roles have one owner | Converged and disposable-integration verified | None at source level |
+| MAAS network API objects have one Terraform owner | Converged and disposable-integration verified | Physical VLAN/DHCP acceptance remains deliberate |
+| Stage-aligned roots replace the monolithic bootstrap root | Complete | Keep split roots and handoff guards covered by CI |

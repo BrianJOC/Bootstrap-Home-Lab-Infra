@@ -1,2 +1,6 @@
 ---
-# tls_lego has no persistent services to restart
+- name: reload bootstrap ingress
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  listen: reload bootstrap ingress

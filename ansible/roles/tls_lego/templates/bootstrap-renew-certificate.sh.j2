@@ -59,11 +59,13 @@ rollback() {
   ln -s "$old_target" "$cert_root/$domain/current.rollback"
   mv -Tf "$cert_root/$domain/current.rollback" "$cert_root/$domain/current"
   systemctl reload vault 2>/dev/null || true
+  systemctl reload nginx 2>/dev/null || true
   gitlab-ctl hup nginx 2>/dev/null || true
 }
 trap rollback ERR
 
 systemctl reload vault 2>/dev/null || true
+systemctl reload nginx
 gitlab-ctl hup nginx 2>/dev/null || true
 if systemctl is-active --quiet vault; then
   curl --silent --show-error "https://vault.$domain:8200/v1/sys/health" >/dev/null

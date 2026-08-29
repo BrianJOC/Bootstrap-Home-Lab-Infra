@@ -76,7 +76,7 @@ Manages GitLab top-level groups (`infrastructure`, `services`), the `infrastruct
 project, project-level CI/CD variables, and committed files (`.gitlab-ci.yml`,
 `terraform/backend.tf.example`).
 
-**Providers:** `gitlabhq/gitlab ~> 16.0`
+**Providers:** `gitlabhq/gitlab 19.2.1`
 
 ### `maas-config`
 

@@ -7,6 +7,12 @@
     "httpPort": 5002,
     "tlsPort": 5001,
     "ocspResponderURL": "",
-    "externalAccountBindingRequired": false
+    "externalAccountBindingRequired": false,
+    "profiles": {
+      "default": {
+        "description": "Disposable bootstrap integration certificates",
+        "validityPeriod": 7776000
+      }
+    }
   }
 }

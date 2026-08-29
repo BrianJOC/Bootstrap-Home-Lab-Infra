@@ -1,220 +1,78 @@
 ---
-# Wait for Authentik API to be available
 - name: Wait for Authentik API to be ready
   ansible.builtin.uri:
     url: "http://localhost:{{ authentik_port_http }}/api/v3/root/config/"
     method: GET
     status_code: [200]
-    validate_certs: false
   register: authentik_api_check
   retries: 30
   delay: 10
   until: authentik_api_check.status == 200
 
-# Write initialized marker. This causes the env template to omit bootstrap credentials
-# on subsequent runs — the template checks authentik_db_initialized via the marker stat.
-- name: Write Authentik initialized marker
-  ansible.builtin.file:
-    path: "{{ authentik_data_dir }}/.initialized"
-    state: touch
-    mode: "0400"
+# Authentik's automated bootstrap can complete migrations and create akadmin
+# without persisting AUTHENTIK_BOOTSTRAP_TOKEN after an interrupted first boot.
+# Reconcile it from the already protected container environment. The secret is
+# never placed in Ansible arguments, output, or a target-side temporary file.
+- name: Reconcile bootstrap API token after interrupted initialization
+  community.docker.docker_container_exec:
+    container: authentik-server
+    argv:
+      - ak
+      - shell
+      - -c
+      - |-
+        import os
+        from authentik.core.models import Token, User
+        user = User.objects.get(username="akadmin")
+        key = os.environ["AUTHENTIK_BOOTSTRAP_TOKEN"]
+        token, created = Token.objects.get_or_create(
+            identifier="bootstrap-terraform",
+            defaults={"user": user, "key": key, "intent": "api", "expiring": False},
+        )
+        changed = created
+        if not created and (token.user_id != user.pk or token.key != key or token.intent != "api" or token.expiring):
+            token.user = user
+            token.key = key
+            token.intent = "api"
+            token.expiring = False
+            token.save()
+            changed = True
+        print("bootstrap-token-updated" if changed else "bootstrap-token-current")
+  register: authentik_token_reconcile
+  changed_when: "'bootstrap-token-updated' in authentik_token_reconcile.stdout"
+  no_log: true
   when: not authentik_db_initialized | default(false)
 
-# Get API token for further configuration
-- name: Get Authentik API token
+- name: Verify the bootstrap API token for Terraform handoff
   ansible.builtin.uri:
     url: "http://localhost:{{ authentik_port_http }}/api/v3/core/tokens/"
     method: GET
     headers:
       Authorization: "Bearer {{ authentik_bootstrap_token }}"
     status_code: [200]
-    validate_certs: false
-  register: authentik_token_check
-  no_log: true
-  when: authentik_bootstrap_token != ""
-
-# Create OIDC provider for Vault
-- name: Check if Vault OIDC provider exists
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=vault"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-    status_code: [200]
-    validate_certs: false
-  register: vault_oidc_check
-  no_log: true
-  when: authentik_bootstrap_token != ""
-
-- name: Create Vault OIDC provider
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-      Content-Type: application/json
-    body_format: json
-    body:
-      name: vault
-      client_type: confidential
-      redirect_uris:
-        - url: "https://vault.{{ internal_domain }}:8200/ui/vault/auth/oidc/oidc/callback"
-          matching_mode: strict
-      sub_mode: hashed_user_id
-      include_claims_in_id_token: true
-      signing_key: null
-    status_code: [201]
-    validate_certs: false
-  when:
-    - authentik_bootstrap_token != ""
-    - vault_oidc_check.json.count is defined
-    - vault_oidc_check.json.count == 0
   no_log: true
 
-# Create OIDC provider for GitLab
-- name: Check if GitLab OIDC provider exists
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=gitlab"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-    status_code: [200]
-    validate_certs: false
-  register: gitlab_oidc_check
-  no_log: true
-  when: authentik_bootstrap_token != ""
+- name: Write Authentik initialized marker
+  ansible.builtin.file:
+    path: "{{ authentik_data_dir }}/.initialized"
+    state: touch
+    mode: "0400"
+    modification_time: preserve
+    access_time: preserve
+  when: not authentik_db_initialized | default(false)
 
-- name: Create GitLab OIDC provider
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-      Content-Type: application/json
-    body_format: json
-    body:
-      name: gitlab
-      client_type: confidential
-      redirect_uris:
-        - url: "https://gitlab.{{ internal_domain }}/users/auth/openid_connect/callback"
-          matching_mode: strict
-      sub_mode: hashed_user_id
-      include_claims_in_id_token: true
-      signing_key: null
-    status_code: [201]
-    validate_certs: false
-  when:
-    - authentik_bootstrap_token != ""
-    - gitlab_oidc_check.json.count is defined
-    - gitlab_oidc_check.json.count == 0
-  no_log: true
-
-- name: Read the effective GitLab OIDC provider
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=gitlab"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-    status_code: [200]
-  register: gitlab_oidc_effective
-  no_log: true
-  when: authentik_bootstrap_token != ""
-
-- name: Persist the GitLab OIDC client secret on the controller
-  ansible.builtin.copy:
-    content: "{{ gitlab_oidc_effective.json.results[0].client_secret }}"
-    dest: "{{ lookup('env', 'HOME') }}/.bootstrap/oidc-gitlab-secret"
+- name: Remove bootstrap credentials from persisted Authentik environment
+  ansible.builtin.template:
+    src: authentik.env.j2
+    dest: "{{ authentik_data_dir }}/.env"
     mode: "0600"
-  delegate_to: localhost
   vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
-  become: false
+    authentik_db_initialized: true
   no_log: true
-  when:
-    - gitlab_oidc_effective.json.results is defined
-    - gitlab_oidc_effective.json.results | length == 1
+  when: not authentik_db_initialized | default(false)
 
-- name: Check whether the GitLab Authentik application exists
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/?slug=gitlab"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-    status_code: [200]
-  register: gitlab_application_check
-  no_log: true
-  when: authentik_bootstrap_token != ""
-
-- name: Create the GitLab Authentik application
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-      Content-Type: application/json
-    body_format: json
-    body:
-      name: GitLab
-      slug: gitlab
-      provider: "{{ gitlab_oidc_effective.json.results[0].pk }}"
-    status_code: [201]
-  no_log: true
-  when:
-    - gitlab_application_check.json.results is defined
-    - gitlab_application_check.json.results | length == 0
-
-- name: Read the effective Vault OIDC provider
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/providers/oauth2/?name=vault"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-    status_code: [200]
-  register: vault_oidc_effective
-  no_log: true
-  when: authentik_bootstrap_token != ""
-
-- name: Persist the Vault OIDC client secret on the controller
-  ansible.builtin.copy:
-    content: "{{ vault_oidc_effective.json.results[0].client_secret }}"
-    dest: "{{ lookup('env', 'HOME') }}/.bootstrap/oidc-vault-secret"
-    mode: "0600"
-  delegate_to: localhost
-  vars:
-    ansible_connection: local
-    ansible_python_interpreter: "{{ ansible_playbook_python }}"
-  become: false
-  no_log: true
-  when:
-    - vault_oidc_effective.json.results is defined
-    - vault_oidc_effective.json.results | length == 1
-
-- name: Check whether the Vault Authentik application exists
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/?slug=vault"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-    status_code: [200]
-  register: vault_application_check
-  no_log: true
-  when: authentik_bootstrap_token != ""
-
-- name: Create the Vault Authentik application
-  ansible.builtin.uri:
-    url: "http://localhost:{{ authentik_port_http }}/api/v3/core/applications/"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ authentik_bootstrap_token }}"
-      Content-Type: application/json
-    body_format: json
-    body:
-      name: Vault
-      slug: vault
-      provider: "{{ vault_oidc_effective.json.results[0].pk }}"
-    status_code: [201]
-  no_log: true
-  when:
-    - vault_application_check.json.results is defined
-    - vault_application_check.json.results | length == 0
+- name: Record declarative configuration ownership
+  ansible.builtin.debug:
+    msg: >-
+      Authentik runtime is ready. Terraform owns groups, providers,
+      applications, policy bindings, and client-secret outputs.

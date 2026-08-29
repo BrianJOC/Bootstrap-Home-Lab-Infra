@@ -27,6 +27,14 @@
   become_user: postgres
   no_log: true
 
+- name: Make each service account owner of its database
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    owner: "{{ item.user }}"
+    state: present
+  loop: "{{ postgresql_databases }}"
+  become_user: postgres
+
 - name: Grant service users full privileges on their databases
   community.postgresql.postgresql_privs:
     db: "{{ item.name }}"
@@ -51,6 +59,18 @@
   loop: "{{ postgresql_databases }}"
   notify: reload postgresql
 
+- name: Configure pg_hba.conf for containerized service users
+  community.postgresql.postgresql_pg_hba:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    contype: host
+    users: "{{ item.0.user }}"
+    source: "{{ item.1 }}"
+    databases: "{{ item.0.name }}"
+    method: md5
+    state: present
+  loop: "{{ postgresql_databases | product(postgresql_container_subnets) | list }}"
+  notify: reload postgresql
+
 # Configure listen_addresses via lineinfile. postgresql_set always reports changed
 # for restart-required params; lineinfile is properly idempotent.
 - name: Configure PostgreSQL listen_addresses
@@ -58,6 +78,14 @@
     dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
     regexp: "^#?listen_addresses\\s*="
     line: "listen_addresses = 'localhost,{{ bootstrap_server_ip }}'"
+    state: present
+  notify: restart postgresql
+
+- name: Configure PostgreSQL lock capacity for GitLab schema operations
+  ansible.builtin.lineinfile:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+    regexp: "^#?max_locks_per_transaction\\s*="
+    line: "max_locks_per_transaction = {{ postgresql_max_locks_per_transaction }}"
     state: present
   notify: restart postgresql
 

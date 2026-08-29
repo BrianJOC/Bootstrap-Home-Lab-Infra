@@ -1,5 +1,41 @@
 ---
 # Install and register GitLab Runner
+- name: Check the pinned Terraform runner version
+  ansible.builtin.command: terraform version
+  register: terraform_runner_version
+  changed_when: false
+  failed_when: false
+
+- name: Install pinned Terraform for the shell runner
+  when: >-
+    terraform_runner_version.rc != 0 or
+    ('Terraform v' + terraform_version) not in terraform_runner_version.stdout
+  block:
+    - name: Install Terraform archive dependency
+      ansible.builtin.apt:
+        name: unzip
+        state: present
+
+    - name: Download pinned Terraform archive
+      ansible.builtin.get_url:
+        url: >-
+          https://releases.hashicorp.com/terraform/{{ terraform_version }}/terraform_{{ terraform_version }}_linux_{{ 'amd64' if ansible_architecture == 'x86_64' else 'arm64' }}.zip
+        dest: /tmp/bootstrap-terraform.zip
+        checksum: "{{ terraform_checksum_amd64 if ansible_architecture == 'x86_64' else terraform_checksum_arm64 }}"
+        mode: "0644"
+
+    - name: Install Terraform runner binary
+      ansible.builtin.unarchive:
+        src: /tmp/bootstrap-terraform.zip
+        dest: /usr/local/bin
+        remote_src: true
+        mode: "0755"
+
+    - name: Remove Terraform archive
+      ansible.builtin.file:
+        path: /tmp/bootstrap-terraform.zip
+        state: absent
+
 - name: Check if gitlab-runner is installed
   ansible.builtin.command: gitlab-runner --version
   register: runner_version_check
@@ -7,11 +43,12 @@
   failed_when: false
 
 # packages.gitlab.com signing key is shared between gitlab-ce and gitlab-runner repos;
-# the get_url task in install.yml already placed it at /usr/share/keyrings/gitlab.gpg.
+# the get_url task in install.yml already placed it at
+# /usr/share/keyrings/gitlab-keyring.asc.
 - name: Add GitLab Runner apt repository
   ansible.builtin.apt_repository:
     repo: >-
-      deb [signed-by=/usr/share/keyrings/gitlab.gpg]
+      deb [signed-by=/usr/share/keyrings/gitlab-keyring.asc]
       https://packages.gitlab.com/runner/gitlab-runner/ubuntu/
       {{ ansible_distribution_release }} main
     state: present
@@ -43,18 +80,17 @@
 # no_log on registered uri results empties .json and breaks selectattr idempotency checks.
 - name: Get existing GitLab Runner registrations
   ansible.builtin.uri:
-    url: "https://localhost/api/v4/runners/all"
+    url: "http://127.0.0.1:{{ gitlab_port_http }}/api/v4/runners/all"
     method: GET
     headers:
       PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
     status_code: [200]
   register: existing_runners
   when: gitlab_api_token is defined
 
 - name: Create GitLab Runner registration token
   ansible.builtin.uri:
-    url: "https://localhost/api/v4/user/runners"
+    url: "http://127.0.0.1:{{ gitlab_port_http }}/api/v4/user/runners"
     method: POST
     body_format: json
     body:
@@ -68,7 +104,6 @@
       paused: false
     headers:
       PRIVATE-TOKEN: "{{ gitlab_api_token }}"
-    validate_certs: false
     status_code: [201]
   register: runner_token_response
   when:
@@ -83,9 +118,7 @@
     --url "https://gitlab.{{ internal_domain }}"
     --token "{{ runner_token_response.json.token }}"
     --executor shell
-    --description bootstrap-runner
-    --tag-list "bootstrap,terraform,ansible"
-    --run-untagged false
+    --name bootstrap-runner
   when:
     - runner_token_response is defined
     - runner_token_response.json is defined

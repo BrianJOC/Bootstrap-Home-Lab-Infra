@@ -6,10 +6,17 @@
     mode: "0700"
 
 - name: Record supported trial mode
+  ansible.builtin.copy:
+    content: "backup protection is not configured (trial mode)\n"
+    dest: /var/lib/bootstrap-home-infra/backup-disabled
+    mode: "0600"
+  when: not backup_enabled | bool
+
+- name: Clear supported trial mode marker when backup is enabled
   ansible.builtin.file:
     path: /var/lib/bootstrap-home-infra/backup-disabled
-    state: "{{ 'absent' if backup_enabled | bool else 'touch' }}"
-    mode: "0600"
+    state: absent
+  when: backup_enabled | bool
 
 - name: Install Restic
   ansible.builtin.apt:
@@ -20,9 +27,12 @@
 
 - name: Create protected backup configuration directory
   ansible.builtin.file:
-    path: /etc/bootstrap-home-infra/backup
+    path: "{{ item.path }}"
     state: directory
-    mode: "0700"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: /etc/bootstrap-home-infra/backup, mode: "0700" }
+    - { path: /var/cache/bootstrap-home-infra/restic, mode: "0700" }
   when: backup_enabled | bool
 
 - name: Store primary Restic repository password
@@ -86,11 +96,21 @@
   when: backup_enabled | bool
 
 - name: Apply explicit retention approval
+  ansible.builtin.copy:
+    content: "retention policy approved\n"
+    dest: /etc/bootstrap-home-infra/backup/retention-approved
+    mode: "0600"
+  when:
+    - backup_enabled | bool
+    - backup_retention_approved | bool
+
+- name: Clear retention approval when it is not accepted
   ansible.builtin.file:
     path: /etc/bootstrap-home-infra/backup/retention-approved
-    state: "{{ 'touch' if backup_retention_approved | bool else 'absent' }}"
-    mode: "0600"
-  when: backup_enabled | bool
+    state: absent
+  when:
+    - backup_enabled | bool
+    - not backup_retention_approved | bool
 
 - name: Install application-consistent backup implementation
   ansible.builtin.template:
@@ -112,9 +132,31 @@
     dest: /usr/local/sbin/bootstrap-gitlab-checkpoint
     mode: "0700"
 
+- name: Install guarded GitLab recovery implementation
+  ansible.builtin.template:
+    src: bootstrap-gitlab-recovery.sh.j2
+    dest: /usr/local/sbin/bootstrap-gitlab-recovery
+    mode: "0700"
+
+- name: Install GitLab infrastructure freeze guard
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
+      marker=/var/lib/bootstrap-home-infra/gitlab-recovery/frozen
+      if [ -s "$marker" ]; then
+        incident="$(awk -F= '$1 == "incident" { print $2 }' "$marker")"
+        echo "GitLab recovery freeze is active for incident $incident; infrastructure mutation is blocked" >&2
+        exit 1
+      fi
+    dest: /usr/local/sbin/bootstrap-gitlab-freeze-guard
+    mode: "0755"
+
 - name: Allow only the GitLab Runner checkpoint hook without a password
   ansible.builtin.copy:
-    content: "gitlab-runner ALL=(root) NOPASSWD: /usr/local/sbin/bootstrap-gitlab-checkpoint\n"
+    content: |
+      gitlab-runner ALL=(root) NOPASSWD: /usr/local/sbin/bootstrap-gitlab-checkpoint
+      gitlab-runner ALL=(root) NOPASSWD: /usr/local/sbin/bootstrap-gitlab-freeze-guard
     dest: /etc/sudoers.d/bootstrap-gitlab-checkpoint
     mode: "0440"
     validate: /usr/sbin/visudo -cf %s
@@ -129,12 +171,36 @@
     - bootstrap-backup.timer
   when: backup_enabled | bool
 
+- name: Inspect existing primary backup timer
+  ansible.builtin.stat:
+    path: /etc/systemd/system/bootstrap-backup.timer
+  register: backup_timer_unit
+
 - name: Apply primary backup timer policy
   ansible.builtin.systemd:
     name: bootstrap-backup.timer
     state: "{{ 'started' if backup_enabled | bool else 'stopped' }}"
     enabled: "{{ backup_enabled | bool }}"
     daemon_reload: true
+  when:
+    - backup_enabled | bool or backup_timer_unit.stat.exists
+
+- name: Remove primary backup units in trial mode
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - bootstrap-backup.service
+    - bootstrap-backup.timer
+  register: removed_primary_backup_units
+  when: not backup_enabled | bool
+
+- name: Reload systemd after removing primary backup units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - not backup_enabled | bool
+    - removed_primary_backup_units is changed
 
 - name: Mark backup disabled if no repository was selected
   ansible.builtin.copy:
@@ -225,9 +291,34 @@
     - backup_enabled | bool
     - backup_usb_enabled | bool
 
+- name: Inspect existing USB copy timer
+  ansible.builtin.stat:
+    path: /etc/systemd/system/bootstrap-backup-copy-usb.timer
+  register: backup_usb_timer_unit
+
 - name: Apply USB copy timer policy
   ansible.builtin.systemd:
     name: bootstrap-backup-copy-usb.timer
     state: "{{ 'started' if (backup_enabled | bool and backup_usb_enabled | bool and backup_usb_copy_interval != 'manual') else 'stopped' }}"
     enabled: "{{ backup_enabled | bool and backup_usb_enabled | bool and backup_usb_copy_interval != 'manual' }}"
     daemon_reload: true
+  when: >-
+    (backup_enabled | bool and backup_usb_enabled | bool) or
+    backup_usb_timer_unit.stat.exists
+
+- name: Remove USB copy units when the target is disabled
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}"
+    state: absent
+  loop:
+    - bootstrap-backup-copy-usb.service
+    - bootstrap-backup-copy-usb.timer
+  register: removed_usb_backup_units
+  when: not (backup_enabled | bool and backup_usb_enabled | bool)
+
+- name: Reload systemd after removing USB copy units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when:
+    - not (backup_enabled | bool and backup_usb_enabled | bool)
+    - removed_usb_backup_units is changed

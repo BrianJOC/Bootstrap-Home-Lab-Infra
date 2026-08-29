@@ -12,6 +12,11 @@ services:
       AUTHENTIK_POSTGRESQL__USER: ${AUTHENTIK_PG_USER}
       AUTHENTIK_POSTGRESQL__NAME: ${AUTHENTIK_PG_NAME}
       AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_PG_PASS}
+      # Compose .env is only an interpolation source; bootstrap values must be
+      # explicitly passed to the server container for automated installation.
+      AUTHENTIK_BOOTSTRAP_PASSWORD: ${AUTHENTIK_BOOTSTRAP_PASSWORD:-}
+      AUTHENTIK_BOOTSTRAP_EMAIL: ${AUTHENTIK_BOOTSTRAP_EMAIL:-}
+      AUTHENTIK_BOOTSTRAP_TOKEN: ${AUTHENTIK_BOOTSTRAP_TOKEN:-}
     volumes:
       - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/media:/media"
       - "{{ (service_data_root + '/authentik') if service_data_root else '/opt/authentik' }}/custom-templates:/templates"
@@ -49,3 +54,10 @@ services:
     container_name: authentik-redis
     restart: unless-stopped
     command: --save 60 1 --loglevel warning
+
+networks:
+  default:
+    name: bootstrap-authentik
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24

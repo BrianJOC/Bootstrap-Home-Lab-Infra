@@ -1,6 +1,6 @@
 # Reboot and Manual-Unseal Recovery
 
-> Status: Accepted target state — 2026-07-28
+> Status: Accepted; ARM64 disposable reboot/unseal/reconcile drill passed — 2026-08-26
 
 ## Decision
 
@@ -88,8 +88,10 @@ The TUI:
 5. displays progress as `N of threshold` without displaying key material; and
 6. stops if the cluster identity changes or Vault resets unseal progress.
 
-The operator normally retrieves shares from the password manager. The workflow
-does not automatically ingest `vault-init.json` or retain entered shares.
+The operator normally retrieves shares from the password manager. The default
+workflow does not automatically ingest `vault-init.json` or retain entered
+shares. `--from-init-file` is an explicit recovery/disposable-automation option;
+it is never selected implicitly and the shares still travel only on SSH stdin.
 
 [Vault starts sealed](https://developer.hashicorp.com/vault/docs/concepts/seal)
 and before unseal it permits status and unseal operations rather than normal
@@ -127,6 +129,15 @@ outage.
   state; it does not attempt to discover or reconstruct shares.
 
 ## Required evidence
+
+Evidence recorded 2026-08-26: an ARM64 QEMU host rebooted with its full platform
+installed; a normal bootstrap rerun stopped safely at sealed Vault and printed
+the recovery command; the configured threshold was submitted without argument
+or log exposure; `vault reconcile` refreshed certificate inventory and the
+periodic backup token; and the subsequent complete bootstrap rerun passed. The
+same run proved DNS, PostgreSQL, Authentik, GitLab, MAAS, and k3s service startup.
+The remaining matrix item is an x86_64 run and deliberate stale-runtime-copy
+injection.
 
 - Cold-boot test with Vault sealed proves DNS, PostgreSQL, Authentik, and GitLab
   health before unseal.

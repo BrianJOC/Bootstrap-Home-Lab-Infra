@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/term"
 
+	"github.com/homelab/bootstrap-home-infra/internal/adoption"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
 	"github.com/homelab/bootstrap-home-infra/internal/logging"
 	"github.com/homelab/bootstrap-home-infra/internal/recovery"
@@ -25,25 +28,32 @@ import (
 )
 
 var (
-	flagTarget           string
-	flagStage            string
-	flagHeadless         bool
-	flagWizard           bool
-	flagAcceptNewHostKey bool
-	flagReplaceHostKey   bool
-	flagApproveTerraform bool
-	flagConfig           string
-	flagEnv              string
-	flagRecoveryBundle   string
-	flagRecoveryOutput   string
-	flagVaultConfig      string
-	flagVaultEnv         string
-	flagOperationConfig  string
-	flagOperationEnv     string
-	flagBackupSnapshot   string
-	flagBackupTarget     string
-	flagAdoptionTarget   string
-	flagAdoptionOutput   string
+	flagTarget                  string
+	flagStage                   string
+	flagHeadless                bool
+	flagWizard                  bool
+	flagAcceptNewHostKey        bool
+	flagReplaceHostKey          bool
+	flagApproveTerraform        bool
+	flagConfig                  string
+	flagEnv                     string
+	flagRecoveryBundle          string
+	flagRecoveryOutput          string
+	flagVaultConfig             string
+	flagVaultEnv                string
+	flagVaultUnsealFromInitFile bool
+	flagOperationConfig         string
+	flagOperationEnv            string
+	flagBackupSnapshot          string
+	flagBackupTarget            string
+	flagAdoptionTarget          string
+	flagAdoptionOutput          string
+	flagApproveAdoption         bool
+	flagGitLabRecoveryMode      string
+	flagGitLabRecoveryIncident  string
+	flagGitLabRecoverySnapshot  string
+	flagGitLabRestoreApproval   string
+	flagGitLabUnfreezeIncident  string
 )
 
 var rootCmd = &cobra.Command{
@@ -72,6 +82,7 @@ func init() {
 	vaultCmd.PersistentFlags().StringVar(&flagVaultConfig, "config", "./config.yaml", "Path to config.yaml")
 	vaultCmd.PersistentFlags().StringVar(&flagVaultEnv, "env", "./.env", "Path to .env")
 	vaultCmd.AddCommand(vaultStatusCmd, vaultUnsealCmd, vaultReconcileCmd)
+	vaultUnsealCmd.Flags().BoolVar(&flagVaultUnsealFromInitFile, "from-init-file", false, "Read shares from vault_init_output_path (explicit recovery or disposable automation only)")
 	rootCmd.AddCommand(vaultCmd)
 	addOperationFlags(backupCmd)
 	backupRestoreCmd.Flags().StringVar(&flagBackupSnapshot, "snapshot", "", "Restic snapshot ID or latest")
@@ -83,8 +94,17 @@ func init() {
 	rootCmd.AddCommand(certificateCmd)
 	addOperationFlags(adoptServerCmd)
 	adoptServerCmd.Flags().StringVar(&flagAdoptionTarget, "target", "", "Server address to audit (defaults to config target)")
-	adoptServerCmd.Flags().StringVar(&flagAdoptionOutput, "output", "", "Optional path for the read-only JSON adoption draft")
+	adoptServerCmd.Flags().StringVar(&flagAdoptionOutput, "output", "", "Write a read-only YAML draft instead of opening a GitLab MR")
+	adoptServerCmd.Flags().BoolVar(&flagApproveAdoption, "approve", false, "Approve opening the displayed adoption merge request in non-interactive mode")
 	rootCmd.AddCommand(adoptServerCmd)
+	addOperationFlags(recoverCmd)
+	gitLabRecoverCmd.Flags().StringVar(&flagGitLabRecoveryMode, "mode", "", "Recovery mode: service or restore")
+	gitLabRecoverCmd.Flags().StringVar(&flagGitLabRecoveryIncident, "incident", "", "Stable incident identifier recorded in recovery evidence")
+	gitLabRecoverCmd.Flags().StringVar(&flagGitLabRecoverySnapshot, "snapshot", "latest", "Complete Restic snapshot ID or latest (restore mode)")
+	gitLabRecoverCmd.Flags().StringVar(&flagGitLabRestoreApproval, "approve-restore", "", "Typed incident identifier required before live restore")
+	gitLabRecoverCmd.Flags().StringVar(&flagGitLabUnfreezeIncident, "unfreeze", "", "Explicitly unfreeze this verified incident")
+	recoverCmd.AddCommand(gitLabRecoverCmd)
+	rootCmd.AddCommand(recoverCmd)
 }
 
 func addOperationFlags(command *cobra.Command) {
@@ -137,6 +157,82 @@ var backupCmd = &cobra.Command{
 	Short: "Inspect, run, or perform an isolated Restic restore drill",
 }
 
+var recoverCmd = &cobra.Command{
+	Use:   "recover",
+	Short: "Run guarded target-service recovery workflows",
+}
+
+var gitLabRecoverCmd = &cobra.Command{
+	Use:   "gitlab",
+	Short: "Freeze, recover, verify, and explicitly unfreeze GitLab",
+	Args:  cobra.NoArgs,
+	RunE: func(_ *cobra.Command, _ []string) error {
+		client, _, err := operationSSHClient(flagOperationConfig, flagOperationEnv, "")
+		if err != nil {
+			return err
+		}
+		defer client.Close()
+
+		if flagGitLabUnfreezeIncident != "" {
+			if flagGitLabRecoveryMode != "" || flagGitLabRecoveryIncident != "" || flagGitLabRestoreApproval != "" {
+				return fmt.Errorf("--unfreeze cannot be combined with --mode, --incident, or --approve-restore")
+			}
+			if err := recovery.ValidateIncidentID(flagGitLabUnfreezeIncident); err != nil {
+				return err
+			}
+			stdout, stderr, runErr := client.RunWithStdin(
+				"sudo -n /usr/local/sbin/bootstrap-gitlab-recovery unfreeze",
+				[]byte(flagGitLabUnfreezeIncident+"\n"),
+			)
+			fmt.Print(stdout)
+			if runErr != nil {
+				return fmt.Errorf("GitLab unfreeze failed: %w: %s", runErr, strings.TrimSpace(stderr))
+			}
+			return nil
+		}
+
+		if err := recovery.ValidateIncidentID(flagGitLabRecoveryIncident); err != nil {
+			return err
+		}
+		switch flagGitLabRecoveryMode {
+		case "service":
+			stdout, stderr, runErr := client.RunWithStdin(
+				"sudo -n /usr/local/sbin/bootstrap-gitlab-recovery service",
+				[]byte(flagGitLabRecoveryIncident+"\n"),
+			)
+			fmt.Print(stdout)
+			if runErr != nil {
+				return fmt.Errorf("GitLab service recovery failed and remains frozen: %w: %s", runErr, strings.TrimSpace(stderr))
+			}
+			return nil
+		case "restore":
+			if flagGitLabRestoreApproval != flagGitLabRecoveryIncident {
+				return fmt.Errorf("live GitLab restore requires --approve-restore %s", flagGitLabRecoveryIncident)
+			}
+			if err := recovery.ValidateSnapshotID(flagGitLabRecoverySnapshot); err != nil {
+				return err
+			}
+			payload := strings.Join([]string{
+				flagGitLabRecoveryIncident,
+				flagGitLabRecoverySnapshot,
+				flagGitLabRestoreApproval,
+				"",
+			}, "\n")
+			stdout, stderr, runErr := client.RunWithStdin(
+				"sudo -n /usr/local/sbin/bootstrap-gitlab-recovery restore",
+				[]byte(payload),
+			)
+			fmt.Print(stdout)
+			if runErr != nil {
+				return fmt.Errorf("GitLab restore failed and remains frozen: %w: %s", runErr, strings.TrimSpace(stderr))
+			}
+			return nil
+		default:
+			return fmt.Errorf("--mode must be service or restore")
+		}
+	},
+}
+
 var backupStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show the backup timer, latest job, and newest snapshot",
@@ -148,7 +244,11 @@ var backupStatusCmd = &cobra.Command{
 		}
 		defer client.Close()
 		stdout, stderr, err := client.Run(`sudo -n systemctl status --no-pager bootstrap-backup.timer bootstrap-backup.service || true
-sudo -n sh -c '. /etc/bootstrap-home-infra/backup/restic-primary.env; restic snapshots --latest 1'`)
+if ! sudo -n test -f /etc/bootstrap-home-infra/backup/primary.env; then
+  sudo -n cat /var/lib/bootstrap-home-infra/backup-status 2>/dev/null || echo "backup protection is not configured"
+  exit 0
+fi
+sudo -n sh -c 'set -a; . /etc/bootstrap-home-infra/backup/primary.env; set +a; restic snapshots --latest 1'`)
 		fmt.Print(stdout)
 		if err != nil {
 			return fmt.Errorf("reading backup status: %w: %s", err, strings.TrimSpace(stderr))
@@ -167,7 +267,8 @@ var backupRunCmd = &cobra.Command{
 			return err
 		}
 		defer client.Close()
-		stdout, stderr, err := client.Run(`sudo -n systemctl start bootstrap-backup.service && sudo -n systemctl status --no-pager bootstrap-backup.service`)
+		stdout, stderr, err := client.Run(`sudo -n systemctl start bootstrap-backup.service || exit $?
+sudo -n systemctl status --no-pager bootstrap-backup.service || true`)
 		fmt.Print(stdout)
 		if err != nil {
 			return fmt.Errorf("running backup: %w: %s", err, strings.TrimSpace(stderr))
@@ -209,7 +310,7 @@ IFS= read -r SNAPSHOT
 IFS= read -r TARGET
 test ! -e "$TARGET"
 sudo -n install -d -m 0700 "$TARGET"
-sudo -n sh -c '. /etc/bootstrap-home-infra/backup/restic-primary.env; restic restore "$1" --target "$2"' sh "$SNAPSHOT" "$TARGET"
+sudo -n sh -c 'set -a; . /etc/bootstrap-home-infra/backup/primary.env; set +a; restic restore "$1" --target "$2"' sh "$SNAPSHOT" "$TARGET"
 sudo -n find "$TARGET" -xdev -type f -print0 | sudo -n xargs -0 sha256sum > /tmp/bootstrap-restore-drill.sha256
 echo "Isolated restore completed at $TARGET"
 `
@@ -279,49 +380,123 @@ var adoptServerCmd = &cobra.Command{
 			return err
 		}
 		defer client.Close()
-		stdout, stderr, err := client.Run(`set -Eeuo pipefail
-printf 'hostname=%s\n' "$(hostname -f)"
-printf 'architecture=%s\n' "$(uname -m)"
-. /etc/os-release
-printf 'operating_system=%s %s\n' "$ID" "$VERSION_ID"
-printf 'machine_id=%s\n' "$(sha256sum /etc/machine-id | awk '{print $1}')"
-printf 'cpu_count=%s\n' "$(getconf _NPROCESSORS_ONLN)"
-printf 'memory_bytes=%s\n' "$(awk '/MemTotal/{print $2 * 1024}' /proc/meminfo)"
-printf 'root_bytes=%s\n' "$(df -B1 --output=size / | tail -1 | tr -d ' ')"
-printf 'interfaces=%s\n' "$(ip -brief link | awk '{print $1}' | paste -sd, -)"
-`)
+		stdout, stderr, err := client.Run(adoption.AuditCommand)
 		if err != nil {
 			return fmt.Errorf("auditing adoption target: %w: %s", err, strings.TrimSpace(stderr))
 		}
-		fields := map[string]string{
-			"target":                   runConfig.TargetHost,
-			"expected_ssh_fingerprint": runConfig.SSHHostFingerprint,
-			"review_state":             "draft-read-only",
+		audit, err := adoption.Parse(runConfig.TargetHost, stdout)
+		if err != nil {
+			return fmt.Errorf("parsing adoption audit: %w", err)
 		}
-		for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
-			key, value, found := strings.Cut(line, "=")
-			if found {
-				fields[key] = value
+		document, err := adoption.RenderNode(audit)
+		if err != nil {
+			return fmt.Errorf("rendering node definition: %w", err)
+		}
+		if flagAdoptionOutput != "" {
+			if err := os.WriteFile(flagAdoptionOutput+".tmp", document, 0600); err != nil {
+				return err
+			}
+			if err := os.Rename(flagAdoptionOutput+".tmp", flagAdoptionOutput); err != nil {
+				return err
+			}
+			fmt.Printf("Read-only adoption draft written to %s; no GitLab change was made.\n", flagAdoptionOutput)
+			return nil
+		}
+		fmt.Printf("Proposed GitLab change: create infrastructure/nodes/%s.yaml\n\n%s\n", audit.Hostname, document)
+		if !flagApproveAdoption {
+			if !term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("opening the adoption merge request requires an interactive confirmation or --approve")
+			}
+			fmt.Fprint(os.Stderr, "Open this draft merge request? [y/N]: ")
+			answer, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+			if readErr != nil {
+				return fmt.Errorf("reading adoption approval: %w", readErr)
+			}
+			answer = strings.ToLower(strings.TrimSpace(answer))
+			if answer != "y" && answer != "yes" {
+				return fmt.Errorf("adoption merge request was not approved")
 			}
 		}
-		document, err := json.MarshalIndent(fields, "", "  ")
+		token, err := gitLabAdoptionCredential(runConfig, flagOperationConfig, flagOperationEnv)
 		if err != nil {
 			return err
 		}
-		document = append(document, '\n')
-		if flagAdoptionOutput == "" {
-			fmt.Print(string(document))
-			return nil
-		}
-		if err := os.WriteFile(flagAdoptionOutput+".tmp", document, 0600); err != nil {
+		gitlab := adoption.NewGitLabClientWithTLS(gitLabOperationBaseURL(runConfig), token, runConfig.APIInsecure)
+		mergeRequestURL, err := gitlab.OpenAdoptionMergeRequest(audit, document)
+		if err != nil {
 			return err
 		}
-		if err := os.Rename(flagAdoptionOutput+".tmp", flagAdoptionOutput); err != nil {
-			return err
-		}
-		fmt.Printf("Read-only adoption draft written to %s; commit it through the GitLab review workflow to adopt.\n", flagAdoptionOutput)
+		fmt.Printf("MR opened: %s\n", mergeRequestURL)
 		return nil
 	},
+}
+
+var gitLabPATPattern = regexp.MustCompile(`(?m)^glpat-[A-Za-z0-9_.-]{16,128}$`)
+
+func gitLabOperationBaseURL(cfg *config.Config) string {
+	if cfg.GitLabBaseURL != "" {
+		return strings.TrimRight(cfg.GitLabBaseURL, "/")
+	}
+	return "https://gitlab." + cfg.InternalDomain
+}
+
+// gitLabAdoptionCredential validates the controller's short-lived PAT and
+// mints a replacement over the already pinned bootstrap-host SSH connection
+// only when it has expired or been revoked. This keeps adoption usable on day
+// two without turning the local bootstrap runner back into a Terraform owner.
+func gitLabAdoptionCredential(cfg *config.Config, configPath, envPath string) (string, error) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	tokenPath := filepath.Join(homeDir, ".bootstrap", "gitlab-api-token")
+	tokenBytes, readErr := os.ReadFile(tokenPath)
+	token := strings.TrimSpace(string(tokenBytes))
+	gitlab := adoption.NewGitLabClientWithTLS(gitLabOperationBaseURL(cfg), token, cfg.APIInsecure)
+	if readErr == nil && token != "" {
+		valid, validateErr := gitlab.ValidateCredential()
+		if validateErr != nil {
+			return "", fmt.Errorf("validating GitLab adoption credential: %w", validateErr)
+		}
+		if valid {
+			return token, nil
+		}
+	} else if readErr != nil && !os.IsNotExist(readErr) {
+		return "", fmt.Errorf("reading GitLab adoption credential: %w", readErr)
+	}
+
+	controller, _, err := operationSSHClient(configPath, envPath, "")
+	if err != nil {
+		return "", fmt.Errorf("opening pinned bootstrap-host connection for GitLab credential refresh: %w", err)
+	}
+	defer controller.Close()
+	stdout, stderr, err := controller.Run(`sudo gitlab-rails runner "user = User.find(1); user.personal_access_tokens.where(name: 'bootstrap-adoption-token').destroy_all; token = user.personal_access_tokens.create!(name: 'bootstrap-adoption-token', scopes: ['api'], expires_at: 2.days.from_now); puts token.token"`)
+	if err != nil {
+		return "", fmt.Errorf("refreshing GitLab adoption credential: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	refreshed := gitLabPATPattern.FindString(stdout)
+	if refreshed == "" {
+		return "", fmt.Errorf("GitLab did not return a valid refreshed adoption credential")
+	}
+	if err = os.MkdirAll(filepath.Dir(tokenPath), 0700); err != nil {
+		return "", err
+	}
+	temporary := tokenPath + ".tmp"
+	if err = os.WriteFile(temporary, []byte(refreshed+"\n"), 0600); err != nil {
+		return "", err
+	}
+	if err = os.Rename(temporary, tokenPath); err != nil {
+		return "", err
+	}
+	valid, err := adoption.NewGitLabClientWithTLS(gitLabOperationBaseURL(cfg), refreshed, cfg.APIInsecure).ValidateCredential()
+	if err != nil {
+		return "", fmt.Errorf("validating refreshed GitLab adoption credential: %w", err)
+	}
+	if !valid {
+		return "", fmt.Errorf("GitLab rejected the refreshed adoption credential")
+	}
+	fmt.Fprintln(os.Stderr, "Refreshed the expired short-lived GitLab adoption credential over pinned SSH.")
+	return refreshed, nil
 }
 
 var vaultStatusCmd = &cobra.Command{
@@ -355,29 +530,69 @@ var vaultUnsealCmd = &cobra.Command{
 			return err
 		}
 		defer client.Close()
-		initBytes, err := os.ReadFile(runConfig.VaultInitOutputPath)
-		if err != nil {
-			return fmt.Errorf("reading Vault recovery JSON: %w", err)
+		var fileShares []string
+		if flagVaultUnsealFromInitFile {
+			initBytes, readErr := os.ReadFile(runConfig.VaultInitOutputPath)
+			if readErr != nil {
+				return fmt.Errorf("reading Vault recovery JSON: %w", readErr)
+			}
+			var initMaterial struct {
+				UnsealKeys []string `json:"unseal_keys_b64"`
+			}
+			if err := json.Unmarshal(initBytes, &initMaterial); err != nil {
+				return fmt.Errorf("decoding Vault recovery JSON: %w", err)
+			}
+			if len(initMaterial.UnsealKeys) < runConfig.VaultThreshold {
+				return fmt.Errorf("Vault recovery JSON has %d shares; threshold is %d", len(initMaterial.UnsealKeys), runConfig.VaultThreshold)
+			}
+			fileShares = initMaterial.UnsealKeys
+		} else if !term.IsTerminal(int(os.Stdin.Fd())) {
+			return fmt.Errorf("manual unseal requires an interactive terminal; use --from-init-file only for explicit recovery or disposable automation")
 		}
-		var initMaterial struct {
-			UnsealKeys []string `json:"unseal_keys_b64"`
-			RootToken  string   `json:"root_token"`
-		}
-		if err := json.Unmarshal(initBytes, &initMaterial); err != nil {
-			return fmt.Errorf("decoding Vault recovery JSON: %w", err)
-		}
-		if len(initMaterial.UnsealKeys) < runConfig.VaultThreshold {
-			return fmt.Errorf("Vault recovery JSON has %d shares; threshold is %d", len(initMaterial.UnsealKeys), runConfig.VaultThreshold)
-		}
+		unsealed := false
 		for index := 0; index < runConfig.VaultThreshold; index++ {
-			_, stderr, unsealErr := client.RunWithStdin(
-				"VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true vault operator unseal",
-				[]byte(initMaterial.UnsealKeys[index]+"\n"),
+			share := ""
+			if flagVaultUnsealFromInitFile {
+				share = fileShares[index]
+			} else {
+				fmt.Fprintf(os.Stderr, "Vault unseal share %d of %d: ", index+1, runConfig.VaultThreshold)
+				value, readErr := term.ReadPassword(int(os.Stdin.Fd()))
+				fmt.Fprintln(os.Stderr)
+				if readErr != nil {
+					return fmt.Errorf("reading Vault unseal share %d: %w", index+1, readErr)
+				}
+				share = strings.TrimSpace(string(value))
+				if share == "" {
+					return fmt.Errorf("Vault unseal share %d is empty", index+1)
+				}
+			}
+			payload, marshalErr := json.Marshal(map[string]string{"key": share})
+			share = ""
+			if marshalErr != nil {
+				return fmt.Errorf("encoding Vault unseal share %d: %w", index+1, marshalErr)
+			}
+			stdout, stderr, unsealErr := client.RunWithStdin(
+				"curl --silent --show-error --fail-with-body --insecure --request POST --header 'Content-Type: application/json' --data-binary @- https://127.0.0.1:8200/v1/sys/unseal",
+				append(payload, '\n'),
 			)
 			if unsealErr != nil {
 				return fmt.Errorf("submitting Vault unseal share %d: %w: %s", index+1, unsealErr, strings.TrimSpace(stderr))
 			}
+			var response struct {
+				Sealed   bool `json:"sealed"`
+				Progress int  `json:"progress"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &response); err != nil {
+				return fmt.Errorf("decoding Vault unseal response for share %d: %w", index+1, err)
+			}
 			fmt.Printf("Accepted unseal share %d of %d\n", index+1, runConfig.VaultThreshold)
+			if !response.Sealed {
+				unsealed = true
+				break
+			}
+		}
+		if !unsealed {
+			return fmt.Errorf("Vault remains sealed after submitting the configured threshold")
 		}
 		fmt.Println("Vault unsealed. Run `bootstrap vault reconcile` to clear deferred secret synchronization.")
 		return nil
@@ -407,70 +622,33 @@ var vaultReconcileCmd = &cobra.Command{
 		if initMaterial.RootToken == "" {
 			return fmt.Errorf("Vault recovery JSON does not contain root_token")
 		}
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return err
-		}
-		oidcSecret, err := os.ReadFile(filepath.Join(homeDir, ".bootstrap", "oidc-vault-secret"))
-		if err != nil {
-			return fmt.Errorf("reading Vault OIDC client secret: %w", err)
-		}
 		script := fmt.Sprintf(`set -Eeuo pipefail
 IFS= read -r VAULT_TOKEN
-IFS= read -r OIDC_SECRET
 export VAULT_TOKEN VAULT_ADDR=https://127.0.0.1:8200 VAULT_SKIP_VERIFY=true
 vault status >/dev/null
-vault secrets list -format=json | grep -q '"secret/"' || vault secrets enable -path=secret kv-v2
-vault kv put secret/bootstrap/tls/wildcard \
+SECRET_MOUNTS="$(vault secrets list -format=json)"
+case "$SECRET_MOUNTS" in *'"secret/"'*) ;; *) exit 1 ;; esac
+sudo -n env VAULT_TOKEN="$VAULT_TOKEN" VAULT_ADDR="$VAULT_ADDR" VAULT_SKIP_VERIFY=true \
+  vault kv put secret/bootstrap/tls/wildcard \
   cert=@/opt/certs/certificates/_.%[1]s.crt \
   key=@/opt/certs/certificates/_.%[1]s.key \
   domain=%[1]s >/dev/null
-cat >/tmp/bootstrap-backup-policy.hcl <<'POLICY'
+sudo -n env VAULT_TOKEN="$VAULT_TOKEN" VAULT_ADDR="$VAULT_ADDR" VAULT_SKIP_VERIFY=true \
+  vault policy write bootstrap-backup - >/dev/null <<'POLICY'
 path "sys/storage/raft/snapshot" {
   capabilities = ["read"]
 }
 POLICY
-vault policy write bootstrap-backup /tmp/bootstrap-backup-policy.hcl >/dev/null
-vault token create -policy=bootstrap-backup -period=24h -orphan -format=json |
+sudo -n env VAULT_TOKEN="$VAULT_TOKEN" VAULT_ADDR="$VAULT_ADDR" VAULT_SKIP_VERIFY=true \
+  vault token create -policy=bootstrap-backup -period=24h -orphan -format=json |
   jq -r .auth.client_token |
-  install -m 0600 /dev/stdin /etc/bootstrap-home-infra/vault-backup-token
-install -m 0600 /dev/null /tmp/bootstrap-vault-oidc-secret
-printf '%%s' "$OIDC_SECRET" > /tmp/bootstrap-vault-oidc-secret
-vault auth list -format=json | grep -q '"oidc/"' || vault auth enable oidc
-vault write auth/oidc/config \
-  oidc_discovery_url=https://authentik.%[1]s/application/o/vault/ \
-  oidc_client_id=vault \
-  oidc_client_secret=@/tmp/bootstrap-vault-oidc-secret >/dev/null
-vault write auth/oidc/role/default \
-  bound_audiences=vault \
-  allowed_redirect_uris=https://vault.%[1]s:8200/ui/vault/auth/oidc/oidc/callback \
-  user_claim=sub \
-  policies=default >/dev/null
-cat >/tmp/bootstrap-gitlab-ci-policy.hcl <<'POLICY'
-path "secret/data/infrastructure/*" {
-  capabilities = ["read"]
-}
-path "secret/data/services/*" {
-  capabilities = ["read"]
-}
-POLICY
-vault policy write gitlab-ci /tmp/bootstrap-gitlab-ci-policy.hcl >/dev/null
-vault auth list -format=json | grep -q '"jwt/"' || vault auth enable -path=jwt jwt
-vault write auth/jwt/config \
-  jwks_url=https://gitlab.%[1]s/-/jwks \
-  bound_issuer=https://gitlab.%[1]s >/dev/null
-vault write auth/jwt/role/gitlab-ci \
-  role_type=jwt \
-  bound_audiences=https://vault.%[1]s:8200 \
-  user_claim=sub \
-  token_policies=gitlab-ci \
-  token_ttl=1h >/dev/null
-rm -f /tmp/bootstrap-backup-policy.hcl
-rm -f /tmp/bootstrap-gitlab-ci-policy.hcl /tmp/bootstrap-vault-oidc-secret
-rm -f /var/lib/bootstrap-home-infra/certificate-vault-sync-pending
+  sudo -n install -m 0600 /dev/stdin /etc/bootstrap-home-infra/vault-backup-token
+AUTH_MOUNTS="$(vault auth list -format=json)"
+case "$AUTH_MOUNTS" in *'"oidc/"'*) ;; *) exit 1 ;; esac
+case "$AUTH_MOUNTS" in *'"jwt/"'*) ;; *) exit 1 ;; esac
+sudo -n rm -f /var/lib/bootstrap-home-infra/certificate-vault-sync-pending
 `, runConfig.InternalDomain)
-		reconcileInput := initMaterial.RootToken + "\n" + strings.TrimSpace(string(oidcSecret)) + "\n"
-		_, stderr, err := client.RunWithStdin(script, []byte(reconcileInput))
+		_, stderr, err := client.RunWithStdin(script, []byte(initMaterial.RootToken+"\n"))
 		if err != nil {
 			return fmt.Errorf("reconciling Vault-backed runtime state: %w: %s", err, strings.TrimSpace(stderr))
 		}
@@ -613,6 +791,11 @@ func runHeadless(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []
 	ctx := context.Background()
 
 	if targetStage != "" {
+		if targetStage != "config-collection" {
+			if err := runner.RunStage(ctx, rc.Config, rc.Secrets, rctx, "config-collection"); err != nil {
+				return fmt.Errorf("targeted-run preflight failed: %w", err)
+			}
+		}
 		return runner.RunStage(ctx, rc.Config, rc.Secrets, rctx, targetStage)
 	}
 	return runner.Run(ctx, rc.Config, rc.Secrets, rctx)
@@ -662,7 +845,15 @@ func runTUI(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage
 			// Preserve environment-derived test/API overrides loaded before the wizard.
 			activeRC.ACMEServerURL = rc.ACMEServerURL
 			activeRC.ACMECACertURL = rc.ACMECACertURL
+			activeRC.ACMEServerHostIP = rc.ACMEServerHostIP
 			activeRC.CloudflareAPIBaseURL = rc.CloudflareAPIBaseURL
+			activeRC.TechnitiumAPIURL = rc.TechnitiumAPIURL
+			activeRC.VaultAPIURL = rc.VaultAPIURL
+			activeRC.AuthentikAPIURL = rc.AuthentikAPIURL
+			activeRC.GitLabAPIURL = rc.GitLabAPIURL
+			activeRC.GitLabBaseURL = rc.GitLabBaseURL
+			activeRC.MAASAPIURL = rc.MAASAPIURL
+			activeRC.APIInsecure = rc.APIInsecure
 
 			if err := config.Validate(activeRC); err != nil {
 				program.Send(tui.FatalMsg{Err: err})
@@ -686,7 +877,13 @@ func runTUI(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage
 		runner := stage.NewRunner(allStages, tuiSink, logPath)
 		ctx := context.Background()
 		if targetStage != "" {
-			err := runner.RunStage(ctx, activeRC.Config, activeRC.Secrets, rctx, targetStage)
+			var err error
+			if targetStage != "config-collection" {
+				err = runner.RunStage(ctx, activeRC.Config, activeRC.Secrets, rctx, "config-collection")
+			}
+			if err == nil {
+				err = runner.RunStage(ctx, activeRC.Config, activeRC.Secrets, rctx, targetStage)
+			}
 			runErrCh <- err
 		} else {
 			err := runner.Run(ctx, activeRC.Config, activeRC.Secrets, rctx)

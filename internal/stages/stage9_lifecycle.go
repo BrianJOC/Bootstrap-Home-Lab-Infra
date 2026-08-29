@@ -25,11 +25,15 @@ func (s *LifecycleStage) Check(_ context.Context, cfg *config.Config, rc *runcon
 	}
 	defer client.Close()
 
-	checks := []string{"test -f /var/lib/bootstrap-home-infra/lifecycle-configured"}
+	checks := []string{
+		"sudo grep -Fxq 'configured=6' /var/lib/bootstrap-home-infra/lifecycle-configured",
+		"sudo test -x /usr/local/sbin/bootstrap-gitlab-recovery",
+		"sudo test -x /usr/local/sbin/bootstrap-gitlab-freeze-guard",
+	}
 	if cfg.BackupEnabled {
 		checks = append(checks, "systemctl is-enabled --quiet bootstrap-backup.timer")
 	} else {
-		checks = append(checks, "test -f /var/lib/bootstrap-home-infra/backup-disabled")
+		checks = append(checks, "sudo test -f /var/lib/bootstrap-home-infra/backup-disabled")
 	}
 	if cfg.ApplicationUpgradesEnabled {
 		checks = append(checks, "systemctl is-enabled --quiet bootstrap-maintenance.timer")

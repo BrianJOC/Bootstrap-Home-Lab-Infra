@@ -83,7 +83,9 @@ source "qemu" "base" {
 
   output_directory = var.output_dir
   vm_name          = "${local.output_name}.qcow2"
-  disk_size        = "10G"
+  # GitLab Omnibus needs several GiB of temporary package/unpack headroom in
+  # addition to the rest of the disposable platform stack.
+  disk_size        = "30G"
   format           = "qcow2"
   accelerator      = var.accelerator
   machine_type     = local.machine_type

@@ -118,7 +118,16 @@ type Config struct {
 	// Runtime-only test/API overrides.
 	ACMEServerURL        string `yaml:"-"`
 	ACMECACertURL        string `yaml:"-"`
+	ACMEIssuingCACertURL string `yaml:"-"`
+	ACMEServerHostIP     string `yaml:"-"`
 	CloudflareAPIBaseURL string `yaml:"-"`
+	TechnitiumAPIURL     string `yaml:"-"`
+	VaultAPIURL          string `yaml:"-"`
+	AuthentikAPIURL      string `yaml:"-"`
+	GitLabAPIURL         string `yaml:"-"`
+	GitLabBaseURL        string `yaml:"-"`
+	MAASAPIURL           string `yaml:"-"`
+	APIInsecure          bool   `yaml:"-"`
 }
 
 // DefaultConfig returns the accepted defaults before operator-specific values
@@ -175,7 +184,7 @@ func DefaultConfig() *Config {
 		VaultThreshold:                    3,
 		K3sEnabled:                        true,
 		K3sClusterName:                    "bootstrap",
-		K3sVersion:                        "v1.29.0+k3s1",
+		K3sVersion:                        "v1.36.3+k3s1",
 	}
 }
 
@@ -278,7 +287,16 @@ func Load(configPath, envPath string) (*RunConfig, error) {
 
 	cfg.ACMEServerURL = envWithDefault("ACME_SERVER_URL", "https://acme-v02.api.letsencrypt.org/directory")
 	cfg.ACMECACertURL = os.Getenv("ACME_CA_CERT_URL")
+	cfg.ACMEIssuingCACertURL = os.Getenv("ACME_ISSUING_CA_CERT_URL")
+	cfg.ACMEServerHostIP = os.Getenv("ACME_SERVER_HOST_IP")
 	cfg.CloudflareAPIBaseURL = envWithDefault("CLOUDFLARE_API_BASE_URL", "https://api.cloudflare.com")
+	cfg.TechnitiumAPIURL = os.Getenv("BOOTSTRAP_TECHNITIUM_API_URL")
+	cfg.VaultAPIURL = os.Getenv("BOOTSTRAP_VAULT_API_URL")
+	cfg.AuthentikAPIURL = os.Getenv("BOOTSTRAP_AUTHENTIK_API_URL")
+	cfg.GitLabAPIURL = os.Getenv("BOOTSTRAP_GITLAB_API_URL")
+	cfg.GitLabBaseURL = os.Getenv("BOOTSTRAP_GITLAB_BASE_URL")
+	cfg.MAASAPIURL = os.Getenv("BOOTSTRAP_MAAS_API_URL")
+	cfg.APIInsecure = os.Getenv("BOOTSTRAP_API_INSECURE") == "true"
 
 	return &RunConfig{
 		Config: cfg,
@@ -368,7 +386,7 @@ func Validate(rc *RunConfig) error {
 			return fmt.Errorf("k3s_cluster_name must use lowercase letters, numbers, and hyphens")
 		}
 		if !regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+\+k3s[0-9]+$`).MatchString(rc.K3sVersion) {
-			return fmt.Errorf("k3s_version must be a pinned release such as v1.29.0+k3s1")
+			return fmt.Errorf("k3s_version must be a pinned release such as v1.36.3+k3s1")
 		}
 	}
 

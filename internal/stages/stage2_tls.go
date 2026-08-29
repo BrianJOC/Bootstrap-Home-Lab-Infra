@@ -3,6 +3,7 @@ package stages
 import (
 	"context"
 	"fmt"
+	"net/url"
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
@@ -37,11 +38,12 @@ func (s *TLSStage) Check(_ context.Context, cfg *config.Config, rc *runcontext.R
 	certPath := fmt.Sprintf("/opt/certs/certificates/_.%s.crt", cfg.InternalDomain)
 	timerCheck := "true"
 	if cfg.CertificateRenewalEnabled {
-		timerCheck = "systemctl is-enabled --quiet bootstrap-certificate-renew.timer"
+		timerCheck = "sudo systemctl is-enabled --quiet bootstrap-certificate-renew.timer"
 	}
+	ingressCheck := "sudo systemctl is-active --quiet nginx && sudo nginx -t >/dev/null 2>&1 && sudo grep -qx shared-ingress-v2 /var/lib/bootstrap-home-infra/ingress-version"
 	stdout, _, err := client.Run(fmt.Sprintf(
-		`test -f %q && openssl x509 -noout -checkend %d -in %q 2>/dev/null && %s && echo valid || echo missing`,
-		certPath, tlsRenewThreshold, certPath, timerCheck,
+		`sudo test -f %q && sudo openssl x509 -noout -checkend %d -in %q >/dev/null 2>&1 && sudo openssl verify -CAfile /etc/ssl/certs/ca-certificates.crt -untrusted %q %q >/dev/null 2>&1 && %s && %s && echo valid || echo missing`,
+		certPath, tlsRenewThreshold, certPath, certPath, certPath, timerCheck, ingressCheck,
 	))
 	if err != nil {
 		return false, fmt.Errorf("checking certificate on target: %w", err)
@@ -67,6 +69,14 @@ func (s *TLSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secret
 		dnsProvider = "httpreq"
 		httpreqEndpoint = cfg.CloudflareAPIBaseURL
 	}
+	acmeServerHost := ""
+	if cfg.ACMEServerHostIP != "" {
+		parsed, parseErr := url.Parse(cfg.ACMEServerURL)
+		if parseErr != nil || parsed.Hostname() == "" {
+			return fmt.Errorf("parsing ACME server URL for host override: %w", parseErr)
+		}
+		acmeServerHost = parsed.Hostname()
+	}
 
 	runner := ansible.New(client, sink)
 	return runner.RunPlaybook(
@@ -77,6 +87,10 @@ func (s *TLSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secret
 			"cloudflare_zone_id":                   cfg.CloudflareZoneID,
 			"admin_email":                          cfg.AdminEmail,
 			"acme_server_url":                      cfg.ACMEServerURL,
+			"lego_acme_ca_cert_url":                cfg.ACMECACertURL,
+			"lego_acme_issuing_ca_cert_url":        cfg.ACMEIssuingCACertURL,
+			"acme_server_host":                     acmeServerHost,
+			"acme_server_host_ip":                  cfg.ACMEServerHostIP,
 			"cf_dns_api_token":                     sec.CloudflareAPIToken,
 			"lego_dns_provider":                    dnsProvider,
 			"lego_httpreq_endpoint":                httpreqEndpoint,

@@ -1,4 +1,23 @@
 ---
+# Fetch the packages.gitlab.com signing key with checksum pinning — detects CDN compromise or MITM.
+# Both gitlab-ce and gitlab-runner repos share this key (verified: same SHA256).
+- name: Download packages.gitlab.com signing key
+  ansible.builtin.get_url:
+    url: https://packages.gitlab.com/gpgkey/gpg.key
+    dest: /usr/share/keyrings/gitlab-keyring.asc
+    checksum: "sha256:003c0ca2fea61767f8c6de7a1c0f49fc88ea3c8db95e3cd1856b32ce9d876e0f"
+    mode: "0644"
+
+- name: Add GitLab CE apt repository
+  ansible.builtin.apt_repository:
+    repo: >-
+      deb [signed-by=/usr/share/keyrings/gitlab-keyring.asc]
+      https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu/
+      {{ ansible_distribution_release }} main
+    state: present
+    filename: gitlab-ce
+    update_cache: true
+
 - name: Install GitLab CE dependencies
   ansible.builtin.apt:
     name:
@@ -9,26 +28,24 @@
       - perl
       - gnupg
     state: present
-    update_cache: true
+    update_cache: false
 
-# Fetch the packages.gitlab.com signing key with checksum pinning — detects CDN compromise or MITM.
-# Both gitlab-ce and gitlab-runner repos share this key (verified: same SHA256).
-- name: Download packages.gitlab.com signing key
-  ansible.builtin.get_url:
-    url: https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey
-    dest: /usr/share/keyrings/gitlab.gpg
-    checksum: "sha256:003c0ca2fea61767f8c6de7a1c0f49fc88ea3c8db95e3cd1856b32ce9d876e0f"
-    mode: "0644"
+- name: Create GitLab configuration directory before package post-install
+  ansible.builtin.file:
+    path: "{{ gitlab_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
 
-- name: Add GitLab CE apt repository
-  ansible.builtin.apt_repository:
-    repo: >-
-      deb [signed-by=/usr/share/keyrings/gitlab.gpg]
-      https://packages.gitlab.com/gitlab/gitlab-ce/ubuntu/
-      {{ ansible_distribution_release }} main
-    state: present
-    filename: gitlab-ce
-    update_cache: true
+- name: Seed GitLab configuration before package post-install
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: "{{ gitlab_config_dir }}/gitlab.rb"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
 
 # GITLAB_ROOT_PASSWORD is consumed once by the omnibus post-install hook and not persisted.
 # Treat gitlab_admin_password as a one-time seed credential — rotate via API after bootstrap.
@@ -40,27 +57,6 @@
   environment:
     EXTERNAL_URL: "https://gitlab.{{ internal_domain }}"
     GITLAB_ROOT_PASSWORD: "{{ gitlab_admin_password }}"
-  no_log: true
-
-# Template gitlab.rb before first reconfigure
-- name: Template GitLab configuration file
-  ansible.builtin.template:
-    src: gitlab.rb.j2
-    dest: "{{ gitlab_config_dir }}/gitlab.rb"
-    owner: root
-    group: root
-    mode: "0600"
-  no_log: true
-
-# NOTE: GITLAB_DB_PASSWORD and GITLAB_OIDC_SECRET must be set here because gitlab.rb
-# reads them via ENV[]. Running gitlab-ctl reconfigure manually without this playbook
-# will fail. This is an expected omnibus bootstrap constraint.
-- name: Run gitlab-ctl reconfigure
-  ansible.builtin.command: gitlab-ctl reconfigure
-  environment:
     GITLAB_DB_PASSWORD: "{{ gitlab_db_password }}"
     GITLAB_OIDC_SECRET: "{{ gitlab_oidc_secret | default('') }}"
   no_log: true
-  register: gitlab_reconfigure_result
-  changed_when: "'gitlab Reconfigured!' in gitlab_reconfigure_result.stdout"
-  failed_when: gitlab_reconfigure_result.rc != 0

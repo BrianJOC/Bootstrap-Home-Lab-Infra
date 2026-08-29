@@ -13,33 +13,6 @@
     timeout: 10
     state: started
 
-- name: Install dnsutils for dig command
-  ansible.builtin.apt:
-    name: dnsutils
-    state: present
-
-- name: DNS resolution check — vault
-  ansible.builtin.command: "dig @127.0.0.1 vault.{{ internal_domain }} +short"
-  register: dns_check_vault
-  changed_when: false
-  failed_when: dns_check_vault.stdout | trim != bootstrap_server_ip
-
-- name: DNS resolution check — authentik
-  ansible.builtin.command: "dig @127.0.0.1 authentik.{{ internal_domain }} +short"
-  register: dns_check_authentik
-  changed_when: false
-  failed_when: dns_check_authentik.stdout | trim != bootstrap_server_ip
-
-- name: DNS resolution check — gitlab
-  ansible.builtin.command: "dig @127.0.0.1 gitlab.{{ internal_domain }} +short"
-  register: dns_check_gitlab
-  changed_when: false
-  failed_when: dns_check_gitlab.stdout | trim != bootstrap_server_ip
-
-- name: Log DNS verification result
+- name: Log Technitium runtime verification result
   ansible.builtin.debug:
-    msg: >
-      DNS verification complete:
-      vault={{ dns_check_vault.stdout | trim }},
-      authentik={{ dns_check_authentik.stdout | trim }},
-      gitlab={{ dns_check_gitlab.stdout | trim }}
+    msg: "Technitium runtime and API ports are ready; Terraform owns zones and records."

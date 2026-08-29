@@ -3,14 +3,9 @@ terraform {
   required_providers {
     gitlab = {
       source  = "gitlabhq/gitlab"
-      version = "~> 16.0"
+      version = "19.2.1"
     }
   }
-}
-
-provider "gitlab" {
-  base_url = var.gitlab_url
-  token    = var.gitlab_token
 }
 
 # ── Top-level Groups ──────────────────────────────────────────────────────────
@@ -45,6 +40,18 @@ resource "gitlab_project" "iac" {
   # This is the target for terraform init -migrate-state (SC-14)
 }
 
+# GitLab CE represents the group Owner as access level 50 but evaluates
+# protected project branches using project roles. Restrict direct bootstrap
+# pushes to the instance administrator (level 60); all routine changes still
+# arrive through merge requests and the reviewed pipeline.
+resource "gitlab_branch_protection" "main" {
+  project            = gitlab_project.iac.id
+  branch             = "main"
+  push_access_level  = "admin"
+  merge_access_level = "maintainer"
+  allow_force_push   = false
+}
+
 # ── Project-level CI/CD Variables ─────────────────────────────────────────────
 
 resource "gitlab_project_variable" "vault_addr" {
@@ -71,6 +78,14 @@ resource "gitlab_project_variable" "vault_role" {
   masked    = false
 }
 
+resource "gitlab_project_variable" "maas_api_url" {
+  project   = gitlab_project.iac.id
+  key       = "MAAS_API_URL"
+  value     = var.maas_api_url
+  protected = false
+  masked    = false
+}
+
 # ── GitLab CI Pipeline Configuration ─────────────────────────────────────────
 
 resource "gitlab_repository_file" "ci_config" {
@@ -79,9 +94,9 @@ resource "gitlab_repository_file" "ci_config" {
   branch         = "main"
   content        = base64encode(file("${path.module}/templates/gitlab-ci.yml"))
   encoding       = "base64"
-  commit_message = "ci: add bootstrap pipeline configuration"
-  author_name    = "bootstrap"
-  author_email   = "bootstrap@${var.internal_domain}"
+  commit_message = "ci: add bootstrap pipeline configuration [skip ci]"
+
+  depends_on = [gitlab_branch_protection.main]
 }
 
 # ── Terraform backend example (committed to repo) ─────────────────────────────
@@ -96,9 +111,7 @@ resource "gitlab_repository_file" "backend_example" {
     domain     = var.internal_domain
   }))
   encoding       = "base64"
-  commit_message = "docs: add Terraform HTTP backend example"
-  author_name    = "bootstrap"
-  author_email   = "bootstrap@${var.internal_domain}"
+  commit_message = "docs: add Terraform HTTP backend example [skip ci]"
 
   depends_on = [gitlab_repository_file.ci_config]
 }
@@ -109,11 +122,20 @@ resource "gitlab_repository_file" "terraform_versions" {
   branch         = "main"
   content        = base64encode(file("${path.module}/templates/versions.tf"))
   encoding       = "base64"
-  commit_message = "build: add the GitLab HTTP state root"
-  author_name    = "bootstrap"
-  author_email   = "bootstrap@${var.internal_domain}"
+  commit_message = "build: add the GitLab HTTP state root [skip ci]"
 
   depends_on = [gitlab_repository_file.backend_example]
+}
+
+resource "gitlab_repository_file" "maas_machines" {
+  project        = gitlab_project.iac.id
+  file_path      = "terraform/maas-machines.tf"
+  branch         = "main"
+  content        = base64encode(file("${path.module}/templates/maas-machines.tf"))
+  encoding       = "base64"
+  commit_message = "build: manage reviewed MAAS node definitions [skip ci]"
+
+  depends_on = [gitlab_repository_file.terraform_versions]
 }
 
 resource "gitlab_repository_file" "cluster_directory" {
@@ -121,11 +143,10 @@ resource "gitlab_repository_file" "cluster_directory" {
   file_path      = "infrastructure/clusters/.gitkeep"
   branch         = "main"
   content        = ""
-  commit_message = "chore: add cluster definition directory"
-  author_name    = "bootstrap"
-  author_email   = "bootstrap@${var.internal_domain}"
+  encoding       = "text"
+  commit_message = "chore: add cluster definition directory [skip ci]"
 
-  depends_on = [gitlab_repository_file.terraform_versions]
+  depends_on = [gitlab_repository_file.maas_machines]
 }
 
 resource "gitlab_repository_file" "node_directory" {
@@ -133,9 +154,8 @@ resource "gitlab_repository_file" "node_directory" {
   file_path      = "infrastructure/nodes/.gitkeep"
   branch         = "main"
   content        = ""
-  commit_message = "chore: add node definition directory"
-  author_name    = "bootstrap"
-  author_email   = "bootstrap@${var.internal_domain}"
+  encoding       = "text"
+  commit_message = "chore: add node definition directory [skip ci]"
 
   depends_on = [gitlab_repository_file.cluster_directory]
 }

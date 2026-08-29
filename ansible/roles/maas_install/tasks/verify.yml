@@ -16,7 +16,7 @@
 
 - name: Assert MAAS API v2.0 responds
   ansible.builtin.uri:
-    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/"
+    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/version/"
     method: GET
     status_code: [200]
     validate_certs: false

@@ -36,7 +36,6 @@ services:
       - /opt/bootstrap-observability/beszel-agent.env
     environment:
       LISTEN: /beszel_socket/beszel.sock
-      HUB_URL: http://127.0.0.1:8090
       DOCKER_HOST: unix:///var/run/docker.sock
     volumes:
       - /opt/bootstrap-observability/beszel-agent:/var/lib/beszel-agent

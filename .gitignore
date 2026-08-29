@@ -31,6 +31,9 @@ vendor/
 # Terraform provider and module working directories. Lockfiles remain tracked
 # candidates because these modules are also applied as standalone roots.
 **/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
 
 # Logs
 logs/

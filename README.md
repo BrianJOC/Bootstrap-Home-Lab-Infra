@@ -111,7 +111,7 @@ break-glass interface. Normal changes are driven by GitLab.
 
 #### MAAS — Stage 7
 
-MAAS (Metal as a Service) handles bare-metal server provisioning. When you add a new physical server to your lab, MAAS PXE-boots it, enumerates its hardware, and lets you deploy an OS to it. `just adopt-server <ip>` performs a pinned-SSH, read-only audit and emits a draft server definition; committing that draft and opening the GitLab MR remains an explicit reviewed step.
+MAAS (Metal as a Service) handles bare-metal server provisioning. When you add a new physical server to your lab, MAAS PXE-boots it, enumerates its hardware, and deploys the reviewed Ubuntu series. `just adopt-server <ip>` performs a pinned-SSH read-only audit, displays the exact node definition and OS-replacement warning, requires approval, and opens a draft GitLab MR. It refreshes its short-lived GitLab credential over the pinned bootstrap-host connection when needed and refuses duplicate definitions or open adoption drafts. After merge, Terraform registers/commissions the machine and uses the separate MAAS instance lifecycle to deploy it; k3s join waits for deliberate confirmation of the replacement OS SSH fingerprint.
 
 MAAS can take over DHCP for one dedicated lab VLAN, ensuring new servers get consistent IP assignments. This is disabled by default and requires an explicit cutover after the tool verifies the VLAN, range, Technitium, and absence of another DHCP authority. UniFi continues to provide DHCP to ordinary home networks.
 
@@ -133,7 +133,7 @@ Bootstrap runs → GitLab comes up → Terraform state migrates to GitLab → Gi
 
 After that handoff, the day-to-day workflow is:
 - Define a service in code → open a merge request → merge → pipeline deploys it
-- Add a server → `just adopt-server <ip>` → review/commit the draft → open and merge an MR → MAAS provisions it
+- Add a server → `just adopt-server <ip>` → review the displayed definition and OS replacement → merge → the pipeline registers, commissions, and deploys it in MAAS → confirm the replacement SSH fingerprint before cluster join
 - Rotate a secret → update in Vault → services pick it up on restart
 
 The bootstrap tool is explicitly designed not to be needed in the normal
@@ -379,11 +379,13 @@ for verified backup protection. See
 
 ### Constrained observability
 
-Uptime Kuma and Beszel run entirely on the target host. Kuma provides
-functional checks, job heartbeats, incident history, and configurable
-Discord/Telegram/ntfy/webhook paging. Beszel provides lightweight CPU, memory,
-disk, network, systemd, container, temperature, and SMART history with
-aggressive built-in aggregation.
+Uptime Kuma and Beszel run entirely on the target host. The immediately active
+health adapter performs functional checks and configurable
+Discord/Telegram/ntfy/webhook paging without requiring either dashboard's
+first-user setup. Kuma can then provide visual monitors and incident history;
+Beszel provides lightweight CPU, memory, disk, network, and container history
+after the operator creates its first user and adds the preconfigured local
+agent.
 
 Paging is recommended but optional; dashboard-only mode is supported. Kuma
 history is retained for seven days, logs remain local for seven days, and

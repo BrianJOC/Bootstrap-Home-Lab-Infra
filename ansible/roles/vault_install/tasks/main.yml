@@ -24,6 +24,12 @@
 - name: Reconcile Vault installation
   ansible.builtin.include_tasks: install.yml
 
+# Configuration and TLS handlers must run before initialization. Deferring a
+# restart until the end of the role can initialize the old listener and then
+# immediately reseal Vault when the pending handler restarts it.
+- name: Apply Vault service configuration before initialization
+  ansible.builtin.meta: flush_handlers
+
 - name: Configure Vault
   ansible.builtin.include_tasks: configure.yml
 

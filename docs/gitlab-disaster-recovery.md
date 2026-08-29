@@ -1,6 +1,6 @@
 # GitLab Loss and GitOps Recovery
 
-> Status: Accepted target state — 2026-07-28
+> Status: Accepted; source implemented and destructive disposable restore passed — 2026-08-27
 
 ## Decision
 
@@ -264,6 +264,49 @@ routine Terraform backend.
 | Terraform lineage or serial conflicts | Keep restored base state; require state-selection review |
 | Verification check fails | Keep automation frozen and identify the failing gate |
 | Checkpoint failed after a successful apply | Preserve live state, report recovery gap, retry checkpoint |
+
+## Implementation and disposable evidence
+
+The host-managed implementation is exposed through:
+
+```text
+bootstrap recover gitlab --mode service --incident <incident-id>
+bootstrap recover gitlab --mode restore --incident <incident-id> \
+  --snapshot <snapshot-id> --approve-restore <incident-id>
+bootstrap recover gitlab --unfreeze <incident-id>
+```
+
+The freeze marker persists across controller interruption and disables Runner
+pickup. Every plan/apply job also calls the freeze guard, so restarting Runner
+cannot bypass the incident. Restore requires the exact incident identifier as a
+typed destructive approval, an exact GitLab package-version match, a complete
+native archive, the isolated GitLab PostgreSQL dump, runtime configuration and
+secret files, and sufficient disk space. A failed preflight or bounded service
+stop leaves the incident frozen and preserves the isolated staging directory
+for a safe retry. Only a matching, verified incident can unfreeze Runner.
+
+Disposable ARM64 evidence recorded on the latest recovery run:
+
+- service recovery reconfigured GitLab, passed `gitlab:check`, and reported
+  zero GitLab secrets-doctor failures while mutation remained frozen;
+- a post-backup canary project was created, then a destructive restore of
+  snapshot `14259756` removed that canary and returned the expected project;
+- the restored critical repository commit was
+  `67abc87da8ea7846b0a48954a712d554c45f883e`;
+- all eight GitLab Terraform states returned with their recorded names,
+  lineages, and serials; the native restore replaced only GitLab's data;
+- two injected safe failures (a bounded Puma stop and already-stopped service
+  status) preserved the freeze and staging, and the next invocation resumed;
+- post-restore `gitlab:check`, repository fsck, and secrets decryption passed;
+  explicit unfreeze restarted Runner; and
+- final snapshot `355a6d5c` restored 2.016 GiB into an isolated path and every
+  one of its 30 `MANIFEST.sha256` entries verified before the drill copy was
+  removed.
+
+This is disposable integration proof, not a claim that TrueNAS, USB, or a real
+homelab GitLab instance has been restored. Newer-than-full-backup checkpoint
+reconciliation and the complete target-loss path remain scheduled drill
+variants rather than blockers to the proven full-backup recovery path.
 
 ## Required evidence
 

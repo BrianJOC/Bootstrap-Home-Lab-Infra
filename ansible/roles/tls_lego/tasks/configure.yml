@@ -5,6 +5,16 @@
     state: directory
     mode: "0755"
 
+- name: Map test ACME hostname to the harness host
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    regexp: "^[^#]*\\s{{ acme_server_host | regex_escape }}(?:\\s|$)"
+    line: "{{ acme_server_host_ip }} {{ acme_server_host }}"
+    state: present
+  when:
+    - acme_server_host | length > 0
+    - acme_server_host_ip | length > 0
+
 # When using a non-production ACME server (e.g., Pebble for testing), its CA cert
 # must be trusted by the system so lego can verify TLS to the ACME server.
 # Pebble uses a self-signed cert; add it to the Ubuntu system CA bundle.
@@ -23,10 +33,24 @@
   register: acme_ca_download
 
 - name: Update system CA certificates
-  ansible.builtin.command: update-ca-certificates
+  ansible.builtin.command: update-ca-certificates --fresh
   register: update_ca_result
   when: acme_ca_download is changed
   changed_when: "'Updating certificates' in update_ca_result.stdout"
+
+- name: Download certificate-issuing CA for test ACME server
+  ansible.builtin.get_url:
+    url: "{{ lego_acme_issuing_ca_cert_url }}"
+    dest: /usr/local/share/ca-certificates/acme-test-issuing-ca.crt
+    mode: "0644"
+  when: lego_acme_issuing_ca_cert_url | length > 0
+  register: acme_issuing_ca_download
+
+- name: Refresh system trust after installing test issuing CA
+  ansible.builtin.command: update-ca-certificates --fresh
+  register: update_issuing_ca_result
+  when: acme_issuing_ca_download is changed
+  changed_when: "'Updating certificates' in update_issuing_ca_result.stdout"
 
 # Idempotency: check if cert exists and is valid (not expiring within 30 days).
 # lego stores wildcard certs with '*' replaced by '_' in the filename.
@@ -45,11 +69,23 @@
   failed_when: false
   when: cert_stat.stat.exists
 
+- name: Check certificate chain against system trust if cert exists
+  ansible.builtin.command: >
+    openssl verify
+    -CAfile /etc/ssl/certs/ca-certificates.crt
+    -untrusted {{ cert_dir }}/certificates/_.{{ internal_domain }}.crt
+    {{ cert_dir }}/certificates/_.{{ internal_domain }}.crt
+  register: cert_trust_check
+  changed_when: false
+  failed_when: false
+  when: cert_stat.stat.exists
+
 - name: Set cert_valid fact
   ansible.builtin.set_fact:
     cert_valid: >-
       {{ cert_stat.stat.exists and
-         (cert_expiry_check.rc is defined and cert_expiry_check.rc == 0) }}
+         (cert_expiry_check.rc is defined and cert_expiry_check.rc == 0) and
+         (cert_trust_check.rc is defined and cert_trust_check.rc == 0) }}
 
 - name: Issue TLS certificate via Cloudflare DNS-01
   ansible.builtin.command: >
@@ -67,9 +103,98 @@
     CLOUDFLARE_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
     CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
     HTTPREQ_ENDPOINT: "{{ lego_httpreq_endpoint }}"
-  when: not cert_valid
+  when: not cert_stat.stat.exists
   register: lego_run
   no_log: true
+
+- name: Replace an existing certificate that no longer chains to trusted roots
+  when:
+    - cert_stat.stat.exists
+    - not cert_valid
+  block:
+    - name: Create isolated certificate reconciliation workspace
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: bootstrap-certificate-reconcile.
+      register: certificate_reconcile_workspace
+
+    - name: Issue replacement certificate into isolated workspace
+      ansible.builtin.command: >
+        {{ lego_install_dir }}/lego
+        --accept-tos
+        --email={{ admin_email }}
+        --domains=*.{{ internal_domain }}
+        --domains={{ internal_domain }}
+        --dns={{ lego_dns_provider }}
+        --dns.disable-cp
+        --server={{ acme_server_url }}
+        --path={{ certificate_reconcile_workspace.path }}
+        run
+      environment:
+        CLOUDFLARE_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
+        CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
+        HTTPREQ_ENDPOINT: "{{ lego_httpreq_endpoint }}"
+      no_log: true
+
+    - name: Validate replacement certificate identity
+      ansible.builtin.command: >
+        openssl x509 -checkhost {{ internal_domain }} -noout
+        -in {{ certificate_reconcile_workspace.path }}/certificates/_.{{ internal_domain }}.crt
+      changed_when: false
+
+    - name: Validate replacement wildcard certificate identity
+      ansible.builtin.command: >
+        openssl x509 -checkhost reconciliation-probe.{{ internal_domain }} -noout
+        -in {{ certificate_reconcile_workspace.path }}/certificates/_.{{ internal_domain }}.crt
+      changed_when: false
+
+    - name: Create replacement certificate version identifier
+      ansible.builtin.command: date -u +%Y%m%dT%H%M%SZ
+      register: certificate_reconcile_version
+      changed_when: false
+
+    - name: Create replacement immutable version directory
+      ansible.builtin.file:
+        path: "{{ cert_dir }}/{{ internal_domain }}/versions/{{ certificate_reconcile_version.stdout }}"
+        state: directory
+        mode: "0700"
+
+    - name: Copy replacement certificate into immutable version
+      ansible.builtin.command:
+        cmd: >-
+          cp -a {{ certificate_reconcile_workspace.path }}/certificates
+          {{ cert_dir }}/{{ internal_domain }}/versions/{{ certificate_reconcile_version.stdout }}/
+        creates: >-
+          {{ cert_dir }}/{{ internal_domain }}/versions/{{ certificate_reconcile_version.stdout }}/certificates
+
+    - name: Restrict replacement private key permissions
+      ansible.builtin.file:
+        path: >-
+          {{ cert_dir }}/{{ internal_domain }}/versions/{{ certificate_reconcile_version.stdout }}/certificates/_.{{ internal_domain }}.key
+        mode: "0600"
+
+    - name: Replace stale ACME account state
+      ansible.builtin.file:
+        path: "{{ cert_dir }}/accounts"
+        state: absent
+
+    - name: Install replacement ACME account state
+      ansible.builtin.command: >
+        cp -a {{ certificate_reconcile_workspace.path }}/accounts {{ cert_dir }}/
+
+    - name: Activate replacement certificate atomically
+      ansible.builtin.file:
+        src: "versions/{{ certificate_reconcile_version.stdout }}"
+        dest: "{{ cert_dir }}/{{ internal_domain }}/current"
+        state: link
+        force: true
+      notify:
+        - reload bootstrap ingress
+  always:
+    - name: Remove certificate reconciliation workspace
+      ansible.builtin.file:
+        path: "{{ certificate_reconcile_workspace.path | default('/tmp/bootstrap-certificate-reconcile-not-created') }}"
+        state: absent
 
 # Always enforce restrictive key permissions, not only on issuance.
 # This corrects any drift (e.g., manual chmod) without re-issuing the cert.
@@ -111,12 +236,29 @@
     - stable_certificate_directory.stat.exists
     - not stable_certificate_directory.stat.islnk
   block:
-    - name: Create initial immutable version
+    - name: Inspect initial immutable certificate layout
+      ansible.builtin.stat:
+        path: "{{ cert_dir }}/{{ internal_domain }}/versions/initial/certificates"
+      register: initial_certificate_version
+
+    - name: Remove incomplete initial immutable version from an interrupted run
+      ansible.builtin.file:
+        path: "{{ cert_dir }}/{{ internal_domain }}/versions/initial"
+        state: absent
+      when: not initial_certificate_version.stat.exists
+
+    - name: Create initial immutable version directory
+      ansible.builtin.file:
+        path: "{{ cert_dir }}/{{ internal_domain }}/versions/initial"
+        state: directory
+        mode: "0700"
+
+    - name: Copy initial certificate directory into the immutable version
       ansible.builtin.command:
         cmd: >-
           cp -a {{ cert_dir }}/certificates
-          {{ cert_dir }}/{{ internal_domain }}/versions/initial
-        creates: "{{ cert_dir }}/{{ internal_domain }}/versions/initial"
+          {{ cert_dir }}/{{ internal_domain }}/versions/initial/
+        creates: "{{ cert_dir }}/{{ internal_domain }}/versions/initial/certificates"
 
     - name: Point current at the initial version
       ansible.builtin.file:
@@ -135,6 +277,7 @@
         src: "{{ cert_dir }}/{{ internal_domain }}/current/certificates"
         dest: "{{ cert_dir }}/certificates"
         state: link
+        force: true
 
 - name: Create protected bootstrap secret directory
   ansible.builtin.file:

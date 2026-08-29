@@ -57,10 +57,10 @@ func (s *ControllerRecoveryStage) Run(_ context.Context, cfg *config.Config, sec
 		return err
 	}
 	defer client.Close()
-	if _, _, err := client.Run("sudo install -d -m 0700 /var/lib/bootstrap-home-infra/controller-recovery && sudo chown \"$(id -u):$(id -g)\" /var/lib/bootstrap-home-infra/controller-recovery"); err != nil {
+	if _, _, err := client.Run("sudo install -d -o root -g root -m 0700 /var/lib/bootstrap-home-infra/controller-recovery"); err != nil {
 		return fmt.Errorf("preparing remote controller recovery directory: %w", err)
 	}
-	if err := client.WriteFile(
+	if err := client.WriteFileSudo(
 		"/var/lib/bootstrap-home-infra/controller-recovery/controller-bundle.tar.gz",
 		bundle,
 		0600,

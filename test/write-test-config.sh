@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DOMAIN="${1:-lab.test}"
-IP="${2:-127.0.0.1}"
+IP="${2:-10.0.2.15}"
 PROFILE="${3:-single}"
 KEY_PATH="$(realpath "$(dirname "$0")/keys/test_id_ed25519")"
 OUTPUT="$(dirname "$0")/config.yaml"

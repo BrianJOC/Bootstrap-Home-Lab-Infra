@@ -1,6 +1,10 @@
 ---
-postgresql_version: "16"
+postgresql_version: "17"
 postgresql_port: 5432
+# GitLab 19's initial schema load acquires more relation locks than PostgreSQL's
+# default allows. Keep enough headroom for a transactional schema install while
+# avoiding a material memory increase on the constrained bootstrap host.
+postgresql_max_locks_per_transaction: 256
 postgresql_databases:
   - name: authentik
     user: authentik
@@ -8,6 +12,11 @@ postgresql_databases:
     user: gitlab
   - name: maas
     user: maas
+
+# Containerized services use a deterministic, host-local bridge so PostgreSQL
+# can authorize the narrow source range instead of every Docker bridge.
+postgresql_container_subnets:
+  - "172.30.10.0/24"
 
 # Per-service database passwords — auto-generated and persisted on the controller.
 # Override in Molecule tests with fixed values.
