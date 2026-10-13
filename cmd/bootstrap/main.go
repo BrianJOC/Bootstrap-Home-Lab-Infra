@@ -780,6 +780,7 @@ func buildStages() []stage.Stage {
 		&stages.K3sStage{},
 		&stages.ControllerRecoveryStage{},
 		&stages.LifecycleStage{},
+		&stages.GitOpsStage{},
 	}
 }
 

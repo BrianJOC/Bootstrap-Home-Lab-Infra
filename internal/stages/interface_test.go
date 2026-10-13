@@ -15,4 +15,5 @@ var (
 	_ stage.Stage = (*K3sStage)(nil)
 	_ stage.Stage = (*ControllerRecoveryStage)(nil)
 	_ stage.Stage = (*LifecycleStage)(nil)
+	_ stage.Stage = (*GitOpsStage)(nil)
 )

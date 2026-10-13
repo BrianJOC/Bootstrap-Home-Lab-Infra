@@ -13,20 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
       - name: Reject merge-conflict markers
         run: |
           if rg -n '^(<{7}|={7}|>{7})( |$)' --glob '!reports/**' .; then
             exit 1
           fi
       - name: Check formatting
-        run: test -z "$(gofmt -l cmd internal)"
-      - run: go test ./cmd/... ./internal/...
-      - run: go build ./...
-      - run: go vet ./...
+        run: test -z "$(bin/gofmt -l cmd internal)"
+      - run: bin/go test ./cmd/... ./internal/...
+      - run: bin/go build ./...
+      - run: bin/go vet ./...
 
   ansible:
     runs-on: ubuntu-latest
@@ -46,12 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
-      - run: terraform fmt -check -recursive terraform
+      - run: bin/terraform fmt -check -recursive terraform
       - name: Validate roots and modules
-        run: |
-          for directory in terraform/environments/bootstrap terraform/modules/*; do
-            [ -d "$directory" ] || continue
-            terraform -chdir="$directory" init -backend=false -input=false
-            terraform -chdir="$directory" validate
-          done
+        run: bin/just tf-validate
+      - name: Validate seeded GitLab project and service chart
+        run: bin/just test-gitops-generated

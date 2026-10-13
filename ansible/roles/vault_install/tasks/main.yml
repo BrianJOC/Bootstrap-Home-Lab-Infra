@@ -32,6 +32,7 @@
 
 - name: Configure Vault
   ansible.builtin.include_tasks: configure.yml
+  when: vault_bootstrap_init_enabled | default(true) | bool
 
 - name: Verify Vault
   ansible.builtin.include_tasks: verify.yml

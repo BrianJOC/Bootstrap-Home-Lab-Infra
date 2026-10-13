@@ -1,0 +1,23 @@
+{
+  "date": "2026-10-13",
+  "baseline": "097a0c26bdc3030a98648cff5017f48345814bc0",
+  "scope": "Current GitOps implementation snapshot; source validation and read-only disposable-guest probe",
+  "remote_default_branch": "main",
+  "previous_repository_push_utc": "2026-08-29T13:45:26Z",
+  "checks": {
+    "source_doctor": "PASS",
+    "lint_all": "PASS",
+    "generated_project_charts_and_terraform_state_lifecycle": "PASS",
+    "release_fixture_tests": "FAIL: one failure and two errors; release-verdict contract and standup fake drift",
+    "integration_doctor": "BLOCKED: Docker daemon unavailable",
+    "release_status": "NO: disposable guest SSH unavailable",
+    "candidate_credential_pattern_scan": "No matches in 393 candidate files; limited pattern scan"
+  },
+  "limitations": [
+    "No complete current-source combined acceptance run",
+    "No guest filesystem inspection because SSH was unavailable",
+    "No physical Raspberry Pi verification",
+    "No real infrastructure inspection or mutation",
+    "New remote CI result not covered by these local results"
+  ]
+}

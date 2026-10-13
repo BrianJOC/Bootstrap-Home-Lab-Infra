@@ -36,7 +36,7 @@ fi
 
 cat > "$(dirname "$0")/.env" <<'ENVEOF'
 CF_DNS_API_TOKEN="test-cf-token-placeholder"
-BOOTSTRAP_ADMIN_PASSWORD="test-admin-password"
+BOOTSTRAP_ADMIN_PASSWORD="QemuFixture-8n4R2x7L9p3V6s1K0z5T"
 CONTROLLER_RECOVERY_PASSWORD="test-controller-recovery-password"
 ENVEOF
 chmod 0600 "$(dirname "$0")/.env"

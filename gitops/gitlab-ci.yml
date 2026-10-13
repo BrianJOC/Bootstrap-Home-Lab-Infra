@@ -1,0 +1,54 @@
+# The project is private and single-administrator. Fork pipelines cannot obtain
+# Vault credentials. Plan and apply use distinct, project-bound JWT roles.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+default:
+  tags: [terraform]
+  before_script:
+    - bash bin/restore-links
+    - mkdir -p .gitops
+    - bin/go build -o .gitops/gitops ./cmd/gitops
+
+stages: [validate, plan, reconcile]
+
+validate:
+  stage: validate
+  script:
+    - bin/go test ./cmd/... ./internal/...
+    - .gitops/gitops validate
+
+plan:
+  stage: plan
+  id_tokens:
+    GITOPS_ID_TOKEN:
+      aud: $VAULT_ADDR
+  script:
+    - .gitops/gitops plan > .gitops/plan-summary.txt
+    - cat .gitops/plan-summary.txt
+  artifacts:
+    when: always
+    paths: [.gitops/plan-summary.txt]
+    expire_in: 7 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# One resource-group lease spans core API configuration, workloads, host
+# reconciliation, health checks, and the checkpoint. A merged commit gets fresh
+# saved plans; merge-request plan artifacts are never applied.
+reconcile:
+  stage: reconcile
+  resource_group: platform-reconcile
+  interruptible: false
+  id_tokens:
+    GITOPS_ID_TOKEN:
+      aud: $VAULT_ADDR
+  script:
+    - bin/just dev-setup
+    - .gitops/gitops apply
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_COMMIT_REF_PROTECTED == "true"'
+  environment:
+    name: homelab

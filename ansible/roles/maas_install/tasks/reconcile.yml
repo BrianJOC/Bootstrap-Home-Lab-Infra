@@ -1,0 +1,21 @@
+---
+# Day-2 only operates the installed snap. API objects belong to Terraform;
+# database initialization, credential creation and image imports are bootstrap.
+- name: Inspect installed MAAS services
+  ansible.builtin.command: snap services maas
+  register: maas_runtime_services
+  changed_when: false
+
+- name: Start existing MAAS services after interruption
+  ansible.builtin.command: snap start --enable maas
+  when: "'inactive' in maas_runtime_services.stdout or 'disabled' in maas_runtime_services.stdout"
+  changed_when: true
+
+- name: Verify existing MAAS API readiness
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ maas_port }}/MAAS/api/2.0/version/"
+    status_code: 200
+  register: maas_runtime_ready
+  retries: 24
+  delay: 5
+  until: maas_runtime_ready.status == 200

@@ -3,6 +3,7 @@ package terraform
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -243,9 +244,16 @@ func (r *Runner) Output(moduleDir, component, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dataDir := filepath.Join(filepath.Dir(statePath), ".terraform", component)
+	// Output reads the protected local snapshot explicitly. Use a separate
+	// provider cache so initializing current lock-file packages cannot disturb
+	// backend metadata for the authoritative GitLab state.
+	dataDir := outputDataDir(statePath, component)
+	environment := terraformEnv(dataDir, nil)
+	if err := r.run(moduleDir, environment, localInitArgs()...); err != nil {
+		return "", fmt.Errorf("initializing Terraform before reading output %s: %w", name, err)
+	}
 	command := exec.Command("terraform", "-chdir="+moduleDir, "output", "-state="+statePath, "-raw", name) //nolint:gosec
-	command.Env = terraformEnv(dataDir, nil)
+	command.Env = environment
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("reading Terraform output %s: %w: %s", name, err, strings.TrimSpace(string(output)))
@@ -260,9 +268,13 @@ func (r *Runner) OutputJSON(moduleDir, component, name string, destination any) 
 	if err != nil {
 		return err
 	}
-	dataDir := filepath.Join(filepath.Dir(statePath), ".terraform", component)
+	dataDir := outputDataDir(statePath, component)
+	environment := terraformEnv(dataDir, nil)
+	if err := r.run(moduleDir, environment, localInitArgs()...); err != nil {
+		return fmt.Errorf("initializing Terraform before reading output %s: %w", name, err)
+	}
 	command := exec.Command("terraform", "-chdir="+moduleDir, "output", "-state="+statePath, "-json", name) //nolint:gosec
-	command.Env = terraformEnv(dataDir, nil)
+	command.Env = environment
 	output, err := command.Output()
 	if err != nil {
 		return fmt.Errorf("reading Terraform output %s: %w", name, err)
@@ -271,6 +283,10 @@ func (r *Runner) OutputJSON(moduleDir, component, name string, destination any) 
 		return fmt.Errorf("decoding Terraform output %s: %w", name, err)
 	}
 	return nil
+}
+
+func outputDataDir(statePath, component string) string {
+	return filepath.Join(filepath.Dir(statePath), ".terraform", component+"-output")
 }
 
 // MigrateStateToGitLab copies a locally authoritative state into GitLab's
@@ -418,22 +434,93 @@ func (r *Runner) run(moduleDir string, environment []string, args ...string) err
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("starting terraform %s: %w", args[0], err)
 	}
-	done := make(chan struct{}, 2)
-	stream := func(scanner *bufio.Scanner, level string) {
-		defer func() { done <- struct{}{} }()
-		for scanner.Scan() {
-			r.sink.Log(level, "terraform", scanner.Text(), nil)
+	streamDone := make(chan error, 2)
+	go func() { streamDone <- streamTerraformOutput(stdout, r.sink, "info") }()
+	go func() { streamDone <- streamTerraformOutput(stderr, r.sink, "warn") }()
+
+	// os/exec requires callers to finish reading StdoutPipe and StderrPipe
+	// before Wait. The stream goroutines drain both pipes concurrently while
+	// Terraform runs, including when an individual plan line is enormous.
+	streamErrs := make([]error, 0, 2)
+	for range 2 {
+		streamErr := <-streamDone
+		streamErrs = append(streamErrs, streamErr)
+		if streamErr != nil {
+			// A broken pipe reader can no longer guarantee that the child is
+			// draining its output. Stop it so the other stream cannot wait on a
+			// process blocked by the failed stream.
+			_ = command.Process.Kill()
 		}
 	}
-	go stream(bufio.NewScanner(stdout), "info")
-	go stream(bufio.NewScanner(stderr), "warn")
 	waitErr := command.Wait()
-	<-done
-	<-done
+	for _, streamErr := range streamErrs {
+		if streamErr != nil {
+			if waitErr != nil {
+				streamErr = errors.Join(streamErr, waitErr)
+			}
+			return fmt.Errorf("reading terraform %s output: %w", args[0], streamErr)
+		}
+	}
 	if waitErr != nil {
 		return fmt.Errorf("terraform %s failed: %w", args[0], waitErr)
 	}
 	return nil
+}
+
+const terraformLogLineLimit = 256 * 1024
+
+// streamTerraformOutput drains Terraform output without retaining unbounded
+// plan lines. GitLab repository_file resources can render base64 source as one
+// line. Stopping at a Scanner token limit leaves Terraform blocked writing to
+// its pipe, so retain a useful prefix for the log and discard the remainder.
+func streamTerraformOutput(reader io.Reader, sink stage.Sink, level string) error {
+	buffered := bufio.NewReaderSize(reader, 32*1024)
+	line := make([]byte, 0, terraformLogLineLimit)
+	truncated := false
+
+	emit := func() {
+		message := strings.TrimSuffix(strings.TrimSuffix(string(line), "\n"), "\r")
+		if truncated {
+			message += fmt.Sprintf(" [truncated after %d bytes]", terraformLogLineLimit)
+		}
+		sink.Log(level, "terraform", message, nil)
+	}
+
+	for {
+		fragment, err := buffered.ReadSlice('\n')
+		if len(fragment) > 0 {
+			remaining := terraformLogLineLimit - len(line)
+			if remaining > 0 {
+				if len(fragment) > remaining {
+					line = append(line, fragment[:remaining]...)
+					truncated = true
+				} else {
+					line = append(line, fragment...)
+				}
+			} else {
+				truncated = true
+			}
+		}
+
+		switch {
+		case err == nil:
+			emit()
+			line = line[:0]
+			truncated = false
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			if len(line) > 0 || truncated {
+				emit()
+			}
+			return nil
+		default:
+			if len(line) > 0 || truncated {
+				emit()
+			}
+			return err
+		}
+	}
 }
 
 func (r *Runner) output(moduleDir string, environment []string, args ...string) ([]byte, error) {

@@ -76,8 +76,8 @@
   changed_when: false
   failed_when: false
 
-# GET omits no_log — response contains only non-sensitive runner metadata;
-# no_log on registered uri results empties .json and breaks selectattr idempotency checks.
+# Registered response data remains available with no_log; protect the API
+# credential in request diagnostics while retaining the idempotency check.
 - name: Get existing GitLab Runner registrations
   ansible.builtin.uri:
     url: "http://127.0.0.1:{{ gitlab_port_http }}/api/v4/runners/all"
@@ -86,6 +86,7 @@
       PRIVATE-TOKEN: "{{ gitlab_api_token }}"
     status_code: [200]
   register: existing_runners
+  no_log: true
   when: gitlab_api_token is defined
 
 - name: Create GitLab Runner registration token

@@ -7,6 +7,11 @@ Implementation and testing may proceed under the standing defaults in
 Repository agents also read [`AGENTS.md`](AGENTS.md) so settled decisions and
 safe local-test authority do not need to be re-established each session.
 
+For the minimal no-backup release, use the
+[repeatable standup and yes/no checks](docs/experimental-release-check.md).
+Start with `bin/just release-status`; missing test coverage is reported explicitly
+and does not count as readiness for a Raspberry Pi.
+
 ## Architecture & Components
 
 ### TLDR
@@ -315,13 +320,16 @@ docs/superpowers/   Design specs and implementation plans
 
 ## Post-bootstrap
 
-After Stage 6 (GitLab) is running, migrate Terraform state to the GitLab HTTP backend:
+Bootstrap migrates each owned Terraform state to GitLab automatically. The
+final GitOps stage inventories CI/runtime credentials in Vault and installs
+the trusted host executor. Routine changes then go through the generated
+`infrastructure/iac` project; keep the retained controller state snapshots for
+recovery.
 
-```bash
-just migrate-tf-state
-```
-
-See `terraform/environments/post-bootstrap/README.md` for details.
+See [GitLab management and web services](docs/gitops.md) for the executable
+pipeline, example service, supported chart contract and current validation
+limits. The web path has component integration tests; full merge-to-service
+acceptance is still pending.
 
 Technitium remains homelab-scoped by default. To make it the DNS resolver for
 additional UniFi networks after bootstrap, follow

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: service-gateway
+description: Authentik OIDC access boundary for a private homelab workload
+type: application
+version: 1.0.0
+appVersion: "7.15.4"

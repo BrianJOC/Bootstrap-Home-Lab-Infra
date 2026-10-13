@@ -1,0 +1,11 @@
+---
+- name: Validate gitops nginx
+  ansible.builtin.command: nginx -t
+  changed_when: false
+  listen: reload gitops nginx
+
+- name: Reload gitops nginx
+  ansible.builtin.systemd:
+    name: nginx
+    state: reloaded
+  listen: reload gitops nginx

@@ -83,6 +83,7 @@ func TestBuildStagesDependencyOrder(t *testing.T) {
 		"k3s",
 		"controller-recovery",
 		"lifecycle",
+		"gitops",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("stage count = %d, want %d (%v)", len(got), len(want), got)

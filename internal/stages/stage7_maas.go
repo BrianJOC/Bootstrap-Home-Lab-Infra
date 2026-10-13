@@ -147,16 +147,8 @@ func (s *MAASStage) Run(_ context.Context, cfg *config.Config, sec *config.Secre
 		return fmt.Errorf("reading GitLab state handoff credential: %w", err)
 	}
 	trimmedGitLabToken := strings.TrimSpace(string(gitlabToken))
-	if err = upsertGitLabProjectVariable(
-		gitlabBaseURL(cfg),
-		projectID,
-		trimmedGitLabToken,
-		"MAAS_API_KEY",
-		trimmedMAASKey,
-		cfg.APIInsecure,
-	); err != nil {
-		return fmt.Errorf("delivering masked MAAS credential to GitLab: %w", err)
-	}
+	// The final GitOps handoff inventories provider credentials in Vault. Jobs
+	// authenticate with project-bound ID tokens; no MAAS secret is stored in CI.
 	return terraformRunner.MigrateStateToGitLab(
 		"bootstrap-maas",
 		"terraform/environments/bootstrap/maas",

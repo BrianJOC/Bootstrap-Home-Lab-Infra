@@ -1,0 +1,5 @@
+apiVersion: v2
+name: whoami
+description: Small acceptance workload for the complete GitOps service path
+version: 1.0.0
+appVersion: "1.11.0"

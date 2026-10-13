@@ -10,6 +10,7 @@ import (
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
 	"github.com/homelab/bootstrap-home-infra/internal/config"
+	"github.com/homelab/bootstrap-home-infra/internal/gitops"
 	"github.com/homelab/bootstrap-home-infra/internal/runcontext"
 	"github.com/homelab/bootstrap-home-infra/internal/ssh"
 	"github.com/homelab/bootstrap-home-infra/internal/stage"
@@ -86,7 +87,16 @@ func (s *GitLabStage) Run(_ context.Context, cfg *config.Config, sec *config.Sec
 		return err
 	}
 	terraformRunner := terraformrunner.New(sink, rc)
+	projectSeed, err := os.MkdirTemp("", "bootstrap-gitops-seed-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(projectSeed)
+	if err = gitops.SeedProject(".", projectSeed, cfg); err != nil {
+		return fmt.Errorf("preparing GitLab management project: %w", err)
+	}
 	gitlabVariables := map[string]string{
+		"iac_source_dir":  projectSeed,
 		"gitlab_url":      gitlabAPIURL(cfg),
 		"gitlab_insecure": boolString(cfg.APIInsecure),
 		"vault_address":   "https://vault." + cfg.InternalDomain + ":8200",

@@ -1,0 +1,50 @@
+---
+# Disposable QEMU fixture. No Vault credential or real homelab target is used.
+- name: Exercise GitOps host handoff on the repository test VM
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    internal_domain: lab.test
+    gitops_host_identity: '{"schema":1,"domain":"lab.test","address":"10.0.2.15","vault_address":"https://vault.lab.test:8200","project_path":"infrastructure/iac"}'
+    gitops_services: []
+    gitops_clusters: {}
+  pre_tasks:
+    - name: Refuse any host except the disposable QEMU guest
+      ansible.builtin.assert:
+        that:
+          - ansible_hostname == 'bootstrap-test'
+          - ansible_host in ['127.0.0.1', 'localhost']
+          - ansible_port | int == 2222
+  tasks:
+    - name: Install the handoff helper
+      ansible.builtin.include_role:
+        name: gitops_runtime
+
+    - name: Reconcile empty service routes and monitor
+      ansible.builtin.include_role:
+        name: gitops_runtime
+        tasks_from: services.yml
+
+    - name: Verify installed trusted identity is a JSON object
+      ansible.builtin.command:
+        argv:
+          - /usr/bin/python3
+          - -c
+          - "import json; assert json.load(open('/etc/bootstrap-home-infra/gitops-host.json'))['project_path'] == 'infrastructure/iac'"
+      changed_when: false
+
+    - name: Verify root-only host identity permissions
+      ansible.builtin.stat:
+        path: /etc/bootstrap-home-infra/gitops-host.json
+      register: gitops_identity_stat
+
+    - name: Assert the unprivileged runner cannot rewrite the trusted identity
+      ansible.builtin.assert:
+        that:
+          - gitops_identity_stat.stat.uid == 0
+          - gitops_identity_stat.stat.mode == '0600'
+
+    - name: Verify safe empty service monitor
+      ansible.builtin.command: /usr/local/sbin/bootstrap-gitops-health
+      changed_when: false

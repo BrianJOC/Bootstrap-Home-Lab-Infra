@@ -1,0 +1,24 @@
+bash scripts/dev-doctor.sh integration
+ok       go                       /opt/homebrew/bin/go
+ok       terraform                /opt/homebrew/bin/terraform
+ok       ansible-playbook         <repository>/.venv/bin/ansible-playbook
+ok       ansible-lint             <repository>/.venv/bin/ansible-lint
+ok       ansible-galaxy           <repository>/.venv/bin/ansible-galaxy
+ok       rg                       /opt/homebrew/Caskroom/codex/0.153.4/codex-path/rg
+ok       git                      /usr/bin/git
+ok       bin/hermit               v0.50.0 (stable)
+ok       bin/python3              Python 3.12.3
+ok       bin/uv                   uv 0.12.0 (b88d7c5c4 2026-07-28 aarch64-apple-darwin)
+ok       bin/just                 just 1.47.1
+ok       molecule                 .venv/bin/molecule
+ok       docker                   /usr/local/bin/docker
+ok       qemu-system-aarch64      /opt/homebrew/bin/qemu-system-aarch64
+ok       qemu-img                 /opt/homebrew/bin/qemu-img
+ok       packer                   /opt/homebrew/bin/packer
+ok       ssh-keyscan              /usr/bin/ssh-keyscan
+blocked  docker-daemon            start Docker Desktop or another local Docker daemon
+ok       qemu-base                test/images/output/base-aarch64.qcow2
+ok       test-ssh-key             present
+
+1 prerequisite(s) need attention for integration testing.
+error: Recipe `doctor-integration` failed on line 25 with exit code 1

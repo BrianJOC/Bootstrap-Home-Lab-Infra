@@ -34,7 +34,8 @@ resource "gitlab_project" "iac" {
   visibility_level = "private"
 
   # Initialize with a README so the repo is not empty (required for HTTP backend)
-  initialize_with_readme = true
+  initialize_with_readme                = true
+  only_allow_merge_if_pipeline_succeeds = true
 
   # Allow Terraform state management via GitLab HTTP backend
   # This is the target for terraform init -migrate-state (SC-14)
@@ -92,11 +93,14 @@ resource "gitlab_repository_file" "ci_config" {
   project        = gitlab_project.iac.id
   file_path      = ".gitlab-ci.yml"
   branch         = "main"
-  content        = base64encode(file("${path.module}/templates/gitlab-ci.yml"))
+  content        = base64encode(file("${path.module}/../../../gitops/gitlab-ci.yml"))
   encoding       = "base64"
   commit_message = "ci: add bootstrap pipeline configuration [skip ci]"
 
   depends_on = [gitlab_branch_protection.main]
+  lifecycle {
+    ignore_changes = [content]
+  }
 }
 
 # ── Terraform backend example (committed to repo) ─────────────────────────────
@@ -114,6 +118,9 @@ resource "gitlab_repository_file" "backend_example" {
   commit_message = "docs: add Terraform HTTP backend example [skip ci]"
 
   depends_on = [gitlab_repository_file.ci_config]
+  lifecycle {
+    ignore_changes = [content]
+  }
 }
 
 resource "gitlab_repository_file" "terraform_versions" {
@@ -125,6 +132,9 @@ resource "gitlab_repository_file" "terraform_versions" {
   commit_message = "build: add the GitLab HTTP state root [skip ci]"
 
   depends_on = [gitlab_repository_file.backend_example]
+  lifecycle {
+    ignore_changes = [content]
+  }
 }
 
 resource "gitlab_repository_file" "maas_machines" {
@@ -136,6 +146,9 @@ resource "gitlab_repository_file" "maas_machines" {
   commit_message = "build: manage reviewed MAAS node definitions [skip ci]"
 
   depends_on = [gitlab_repository_file.terraform_versions]
+  lifecycle {
+    ignore_changes = [content]
+  }
 }
 
 resource "gitlab_repository_file" "cluster_directory" {
@@ -158,4 +171,22 @@ resource "gitlab_repository_file" "node_directory" {
   commit_message = "chore: add node definition directory [skip ci]"
 
   depends_on = [gitlab_repository_file.cluster_directory]
+}
+
+# Git owns edits after the initial seed. Terraform retains the file addresses
+# without resetting reviewed source on every core configuration apply.
+resource "gitlab_repository_file" "project_source" {
+  for_each            = var.iac_source_dir == "" ? {} : jsondecode(file("${var.iac_source_dir}/platform/seed-files.json"))
+  project             = gitlab_project.iac.id
+  file_path           = each.key
+  branch              = "main"
+  content             = base64encode(file("${var.iac_source_dir}/${each.value}"))
+  encoding            = "base64"
+  execute_filemode    = startswith(each.key, "bin/") || endswith(each.key, ".sh")
+  overwrite_on_create = each.key == "README.md"
+  commit_message      = "bootstrap: seed ${each.key} [skip ci]"
+  depends_on          = [gitlab_repository_file.node_directory]
+  lifecycle {
+    ignore_changes = [content]
+  }
 }

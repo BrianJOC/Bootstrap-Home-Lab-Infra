@@ -78,19 +78,14 @@
 
 # Disable systemd-resolved stub listener so Technitium can bind port 53.
 # We must preserve working DNS across the transition:
-#   1. Capture upstream nameservers before the stub goes away.
-#   2. Write them directly to /etc/resolv.conf (breaks the symlink to stub).
-#   3. Disable the stub, flush (restarts resolved), freeing port 53.
-- name: Capture upstream nameservers from systemd-resolved full resolver
-  ansible.builtin.slurp:
+# The full resolver contains upstream addresses, not the stub. Keep the link
+# on day-2 runs so resolved can continue updating nameservers after cutover.
+- name: Use the full resolver before disabling the stub listener
+  ansible.builtin.file:
     src: /run/systemd/resolve/resolv.conf
-  register: upstream_resolv
-
-- name: Write /etc/resolv.conf with upstream nameservers (bypasses stub)
-  ansible.builtin.copy:
-    content: "{{ upstream_resolv.content | b64decode }}"
     dest: /etc/resolv.conf
-    mode: "0644"
+    state: link
+    force: true
 
 - name: Ensure systemd-resolved drop-in directory exists
   ansible.builtin.file:
@@ -107,15 +102,16 @@
       [Resolve]
       DNSStubListener=no
     mode: "0644"
+  register: technitium_resolved_stub
 
 - name: Restart systemd-resolved to apply stub listener change
   ansible.builtin.systemd:
     name: systemd-resolved
     state: restarted
+  when: technitium_resolved_stub is changed
 
 - name: Start Technitium via Docker Compose
   community.docker.docker_compose_v2:
     project_src: /opt/technitium
     state: present
-    recreate: always
-
+    recreate: auto

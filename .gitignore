@@ -19,6 +19,7 @@ vault-init.json
 # Operator-specific controller topology and local key paths
 config.yaml
 test/config-ssd.yaml
+test/gitops-config.yaml
 
 # Test config backups
 config.yaml.bak

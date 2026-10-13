@@ -1,0 +1,343 @@
+terraform fmt -check -recursive terraform
+GOCACHE="${TMPDIR:-/tmp}/bootstrap-home-infra-go-cache" go test ./cmd/... ./internal/...
+ok  	github.com/homelab/bootstrap-home-infra/cmd/bootstrap	0.419s
+ok  	github.com/homelab/bootstrap-home-infra/internal/adoption	0.242s
+ok  	github.com/homelab/bootstrap-home-infra/internal/ansible	0.707s
+ok  	github.com/homelab/bootstrap-home-infra/internal/config	1.345s
+?   	github.com/homelab/bootstrap-home-infra/internal/logging	[no test files]
+ok  	github.com/homelab/bootstrap-home-infra/internal/recovery	1.560s
+ok  	github.com/homelab/bootstrap-home-infra/internal/runcontext	1.010s
+ok  	github.com/homelab/bootstrap-home-infra/internal/ssh	1.184s
+ok  	github.com/homelab/bootstrap-home-infra/internal/stage	0.552s
+ok  	github.com/homelab/bootstrap-home-infra/internal/stages	0.875s
+ok  	github.com/homelab/bootstrap-home-infra/internal/terraform	1.599s
+ok  	github.com/homelab/bootstrap-home-infra/internal/tui	1.753s
+PLAYBOOK=.venv/bin/ansible-playbook; [ -x "$PLAYBOOK" ] || PLAYBOOK="$(command -v ansible-playbook)"; ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/bootstrap-home-infra-ansible-local" ANSIBLE_REMOTE_TEMP=/tmp/.ansible-bootstrap "$PLAYBOOK" --syntax-check ansible/playbooks/site.yml -i 'bootstrap_target,' -e bootstrap_server_ip=127.0.0.1 -e internal_domain=home.example.com
+
+playbook: ansible/playbooks/site.yml
+GOCACHE="${TMPDIR:-/tmp}/bootstrap-home-infra-go-cache" go build ./cmd/... ./internal/...
+GOCACHE="${TMPDIR:-/tmp}/bootstrap-home-infra-go-cache" go vet ./cmd/... ./internal/...
+LINTER=.venv/bin/ansible-lint; [ -x "$LINTER" ] || LINTER="$(command -v ansible-lint)"; ANSIBLE_LOCAL_TEMP="${TMPDIR:-/tmp}/bootstrap-home-infra-ansible-local" ANSIBLE_REMOTE_TEMP=/tmp/.ansible-bootstrap "$LINTER" ansible/playbooks ansible/roles
+WARNING: PATH altered to include <repository>/.venv/bin, <repository>/.venv/bin :: This is usually a sign of broken local setup, which can cause unexpected behaviors.
+
+Passed: 0 failure(s), 0 warning(s) in 127 files processed of 129 encountered. Profile 'min' was required, but 'production' profile passed.
+just tf-validate
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of goauthentik/authentik from the dependency lock file
+- Using previously-installed goauthentik/authentik v2024.2.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of bartei/technitium from the dependency lock file
+- Using previously-installed bartei/technitium v1.0.1
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of gitlabhq/gitlab from the dependency lock file
+- Using previously-installed gitlabhq/gitlab v19.2.1
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of canonical/maas from the dependency lock file
+- Using previously-installed canonical/maas v2.8.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/vault from the dependency lock file
+- Using previously-installed hashicorp/vault v3.25.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/vault from the dependency lock file
+- Using previously-installed hashicorp/vault v3.25.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing modules...
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/vault from the dependency lock file
+- Using previously-installed hashicorp/vault v3.25.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of goauthentik/authentik from the dependency lock file
+- Using previously-installed goauthentik/authentik v2024.2.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of bartei/technitium from the dependency lock file
+- Using previously-installed bartei/technitium v1.0.1
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of gitlabhq/gitlab from the dependency lock file
+- Using previously-installed gitlabhq/gitlab v19.2.1
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/helm from the dependency lock file
+- Using previously-installed hashicorp/helm v2.17.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- terraform.io/builtin/terraform is built in to Terraform
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of canonical/maas from the dependency lock file
+- Using previously-installed canonical/maas v2.8.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/vault from the dependency lock file
+- Using previously-installed hashicorp/vault v3.25.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/vault from the dependency lock file
+- Using previously-installed hashicorp/vault v3.25.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Reusing previous version of hashicorp/vault from the dependency lock file
+- Using previously-installed hashicorp/vault v3.25.0
+
+
+
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.
+
+Initializing provider plugins found in the configuration...
+- Finding canonical/maas versions matching "2.8.0"...
+- Installing canonical/maas v2.8.0...
+- Installed canonical/maas v2.8.0 (self-signed, key ID A7209377EEEC4607)
+Partner and community providers are signed by their developers.
+If you'd like to know more about provider signing, you can read about it here:
+https://developer.hashicorp.com/terraform/cli/plugins/signing
+
+
+
+Terraform has created a lock file .terraform.lock.hcl to record the provider
+selections it made above. Include this file in your version control repository
+so that Terraform can guarantee to make the same selections by default when
+you run "terraform init" in the future.
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+Success! The configuration is valid.

@@ -1,0 +1,6 @@
+---
+- name: Complete GitLab operational handoff
+  hosts: bootstrap_target
+  become: true
+  roles:
+    - gitops_runtime

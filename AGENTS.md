@@ -44,6 +44,11 @@ inspected and do not turn a read-only review into a mutation.
 
 ## Validation order
 
+For recurring checks, logs, and disposable guest operations, use the scoped
+entry point documented in `docs/development-permissions.md`. Prefer its absolute
+invocation over shell wrappers, per-file SCP approvals, or new broad rules.
+This does not expand authority over real systems or publishing.
+
 1. Run `scripts/dev-doctor.sh source`.
 2. Run conflict, formatting, Go test/build/vet, Ansible syntax/lint, and
    Terraform format/validate checks.

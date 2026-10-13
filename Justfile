@@ -3,6 +3,26 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 default:
     @just --list
 
+# Stable entry points for the no-backup experimental release checklist.
+# status exits 1 until every required gate has actual passing evidence.
+release-status:
+    bin/python scripts/release-check.py status
+
+release-source:
+    bin/python scripts/release-check.py source
+
+# Mutates only the fixed disposable guest; preserves an existing snapshot.
+release-standup:
+    bin/python scripts/release-check.py standup
+
+release-verify:
+    bin/python scripts/release-check.py verify
+
+test-release-check:
+    bin/python scripts/test-release-check.py
+    bin/python scripts/test-dev-authorized.py
+    bin/python scripts/test-gitops-guest-merge-unit.py
+
 # Use Hermit's pinned Python/uv to create the Python test environment.
 dev-setup:
     bin/uv venv --clear --python bin/python3 .venv
@@ -40,6 +60,27 @@ conflict-check:
 # Run Go unit tests.
 test-go:
     GOCACHE="${TMPDIR:-/tmp}/bootstrap-home-infra-go-cache" go test ./cmd/... ./internal/...
+
+# Render the actual seeded project and validate it with pinned Helm/Terraform.
+test-gitops-generated:
+    GOCACHE="${TMPDIR:-/tmp}/bootstrap-home-infra-go-cache" GITOPS_TOOL_TEST=1 go test -v ./internal/gitops -run 'TestGeneratedProjectToolsAndCharts|TestTerraformHTTPStateLifecycle'
+
+# Exercise the shipped access proxy with synthetic allowed/denied OIDC users.
+test-gitops-access:
+    GOCACHE="${TMPDIR:-/tmp}/bootstrap-home-infra-go-cache" GITOPS_DOCKER_TEST=1 go test -v ./internal/gitops -run TestGatewayGroupEnforcement -timeout 5m
+
+# Requires the existing disposable ARM64 QEMU guest (just vm-up/vm-resume).
+test-gitops-handoff:
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+    work_dir="$(mktemp -d /tmp/bootstrap-gitops-handoff.XXXXXX)"
+    trap 'rm -rf -- "$work_dir"' EXIT
+    GOCACHE=/tmp/bootstrap-home-infra-go-cache GOOS=linux GOARCH=arm64 CGO_ENABLED=0 bin/go build -o "$work_dir/gitops" ./cmd/gitops
+    ANSIBLE_CONFIG=ansible/ansible.cfg ANSIBLE_LOCAL_TEMP=/tmp/bootstrap-home-infra-ansible-local \
+      .venv/bin/ansible-playbook ansible/playbooks/test-gitops-handoff.yml \
+      -i 'localhost,' -e ansible_host=127.0.0.1 -e ansible_port=2222 \
+      -e ansible_user=ansible -e ansible_ssh_private_key_file="$PWD/test/keys/test_id_ed25519" \
+      -e gitops_binary_path="$work_dir/gitops"
 
 # Verify Go formatting without changing files.
 fmt-check:
@@ -96,6 +137,9 @@ vm-up arch="aarch64" accelerator="hvf":
     test -f "$BASE" || { echo "missing $BASE; run just build-base-image" >&2; exit 1; }
     test ! -f "$PID_FILE" || { echo "VM PID file already exists: $PID_FILE" >&2; exit 1; }
     qemu-img create -f qcow2 -b "$(realpath "$BASE")" -F qcow2 "$SNAP"
+    # GitLab packages, images, providers and a guest-local test controller do
+    # not fit in the base cloud image's 10 GiB disk. This remains sparse.
+    qemu-img resize "$SNAP" 60G
     if [ "{{arch}}" = "aarch64" ]; then
         qemu-system-aarch64 -machine virt -cpu host -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
           -accel {{accelerator}} -m 8192 -drive if=virtio,file="$SNAP",format=qcow2 \

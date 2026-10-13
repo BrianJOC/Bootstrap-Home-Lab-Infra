@@ -71,12 +71,24 @@ Tool-enforced approval prompts for network access, package download, browser
 rendering, or local virtualization are execution-environment permissions, not
 requests to reconsider the product design.
 
+### GitOps job ordering clarification — 2026-09-28
+
+[Resource ownership](resource-ownership.md#day-2-contract) describes separate,
+ordered Terraform and Ansible jobs. The current implementation keeps those
+owners and ordered steps inside one GitLab reconciliation job so one
+`resource_group` lease spans API changes, host reconciliation, health checks,
+and the [post-apply checkpoint](gitlab-disaster-recovery.md#post-apply-critical-checkpoint).
+This is the safer reversible interpretation: no second apply can interleave
+between those steps. It does not by itself complete the checkpoint's separate
+commit-binding or recovery-verification requirements.
+
 ## Tooling baseline
 
 The supported local baseline is:
 
 - Go from `go.mod`;
-- Terraform 1.6 or newer;
+- Terraform 1.9 or newer (Hermit pins 1.14.7; cross-variable validation in the
+  MAAS configuration requires the newer language baseline);
 - the checked-in Hermit environment for repository command-line tools;
 - Hermit-pinned Python 3.12 and `uv`, with `uv` installing the Python packages
   locked in `requirements-dev.lock` into the ignored `.venv`;

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>bootstrap-home-infra · Repository Review</title>
+  <title>bootstrap-home-infra · Intent &amp; Readiness · 4 October 2026</title>
   <style>
     :root {
       --navy: #123b53;
@@ -385,113 +385,264 @@
       .arrow { height: 42px; transform: rotate(90deg); }
       .tldr { grid-template-columns: 1fr; }
     }
+
+    main a { color: #087575; text-underline-offset: 3px; }
+    main a:hover { color: var(--navy); }
+    .finding { margin-top: 16px; }
+    .finding summary { cursor: pointer; color: var(--ink); font-weight: 700; }
+    .finding summary .state { margin-right: 8px; }
+    .finding p { margin-top: 13px; }
+    .finding .sources { font-size: 12px; line-height: 1.8; }
+    .finding h3 { margin-top: 18px; }
+    .metric { font: 700 29px Georgia, serif; color: var(--ink); margin-bottom: 7px; }
+    .filters { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; margin: 17px 0; }
+    .filters button, .print { font: inherit; font-size: 12px; border: 1px solid #b8cbcf; background: var(--paper); color: var(--ink); border-radius: 6px; padding: 9px 12px; cursor: pointer; }
+    .filters button[aria-pressed="true"] { background: var(--navy); color: white; }
+    #criterion-count { font-size: 12px; color: #526b78; }
+    .criteria td:first-child { width: 58px; font-weight: 700; }
+    .criteria td:nth-child(2) { min-width: 185px; }
+    .criteria td:nth-child(3) { min-width: 145px; }
+    .criteria td:nth-child(4) { min-width: 270px; }
+    .muted { color: #61737d; }
+    .table caption { text-align: left; padding: 15px; color: var(--ink); font-weight: 700; }
+    .finding:target { outline: 3px solid var(--teal); outline-offset: 4px; }
+    pre { overflow: auto; white-space: pre-wrap; background: #edf3f4; padding: 16px; border-radius: 6px; }
+    :focus-visible { outline: 3px solid var(--teal); outline-offset: 3px; }
+    @media print {
+      .layout { display: block; } .side, .filters, .print { display: none; }
+      main { width: 100%; padding: 0; } body { font-size: 11px; background: white; }
+      h1 { font-size: 34px; } h2 { font-size: 25px; } section { margin-top: 28px; }
+      .card, .diagram, .table { box-shadow: none; } .table { overflow: visible; }
+      .criteria td { min-width: 0 !important; } tr, .card { break-inside: avoid; }
+      .finding { break-inside: auto; } .tldr { print-color-adjust: exact; }
+    }
   </style>
 </head>
 <body>
 <div class="layout">
   <aside class="side">
-    <div class="brand"><small>Repository review</small>bootstrap-home-infra</div>
-    <nav>
-      <a href="#summary">Current verdict</a><a href="#goal">Product goal</a><a href="#architecture">Architecture</a>
-      <a href="#stages">Stage readiness</a><a href="#gaps">Remaining gaps</a><a href="#decisions">Settled decisions</a>
-      <a href="#evidence">Evidence</a><a href="#next">Next review</a>
+    <div class="brand"><small>Independent reassessment</small>bootstrap-home-infra</div>
+    <nav aria-label="Report sections">
+      <a href="#summary">Current verdict</a><a href="#intent">What we are building</a>
+      <a href="#architecture">Intended path</a><a href="#achieved">What is already real</a>
+      <a href="#criteria">22 success criteria</a><a href="#findings">Implementation gaps</a>
+      <a href="#examples">Operator examples</a><a href="#decisions">Decisions &amp; scope</a>
+      <a href="#next">Path to completion</a><a href="#evidence">Evidence &amp; limits</a>
     </nav>
-    <div class="stamp">SOURCE + INTEGRATION REVIEW<br>Revalidated 27 August 2026<br>Local working tree</div>
+    <div class="stamp">UPDATED 13 OCTOBER 2026<br>GitOps implementation snapshot<br>Source gates pass; combined acceptance pending</div>
   </aside>
   <main>
     <section class="hero" id="summary">
-      <p class="eyebrow">Implementation and acceptance assessment</p>
-      <h1>The bootstrap, handoff, and destructive recovery spine now work in a disposable lab.</h1>
-      <p class="lede">Resource ownership is converged, the full ARM64 bootstrap reached GitLab handoff, and rerun, interruption, reboot, adoption, manifest-backed backup, destructive GitLab restore, explicit unfreeze, and controller-recovery paths were exercised. This report continues to separate accepted decisions, implemented source, disposable proof, and external hardware acceptance.</p>
-      <div class="badges"><span class="badge good">0 open P0 blockers</span><span class="badge good">0 open P1 source blockers</span><span class="badge good">source gates green</span><span class="badge good">full QEMU + recovery proven</span><span class="badge">no real homelab changed</span></div>
-      <div class="tldr"><strong>TL;DR</strong><p>The repository is in a push-ready greenfield state after final validation: all platform stages install, split Terraform state is verified and handed to GitLab, post-handoff local mutation is blocked, the final Restic manifest verifies, GitLab full-loss restore and explicit unfreeze work, Vault reboot recovery works, and reviewed server adoption now models registration, commissioning, and OS deployment. No accepted backup, certificate, reboot, upgrade, observability, or paging decision is being reclassified as an issue. The remaining work is deliberate external acceptance plus a P2 design/implementation review for post-deployment SSH confirmation before automatic k3s join.</p></div>
+      <p class="eyebrow">Intent, implementation, and operational readiness</p>
+      <h1>The GitOps paths now exist.<br>Combined acceptance is the next gate.</h1>
+      <p class="lede">This implementation focuses on the two requested outcomes: GitLab takes over core configuration and host runtime, and a merged web-service definition drives deployment, DNS, TLS, group access and health checks. October 13 source gates and generated-project tests pass. Release-runner fixtures fail, Docker is stopped, and the disposable guest is unreachable. The final runtime handoff and complete merge-to-service workflow remain unproven.</p>
+      <div class="badges"><span class="badge good">Core and web paths implemented</span><span class="badge good">Remote-state and access tests pass</span><span class="badge warn">Combined acceptance pending</span><span class="badge">Real homelab unchanged</span></div>
+      <div class="tldr"><strong>Current verdict</strong><p>The missing operational connection has been implemented: GitLab receives the management source, privileged credentials stay in Vault, existing states remain authoritative, and protected-main jobs reconcile core resources and authenticated web applications. Component evidence is positive. Keep the blocker open until a complete merge-to-service run and a core configuration change succeed together without the original laptop.</p></div>
+      <p class="muted">This report evaluates the checked-out source and disposable test fixtures. No real homelab was changed. The operator authorized preserving the latest implementation on GitHub's default branch, <code>main</code>; there is no <code>master</code> branch. The previous push was August 29 at 13:45:26 UTC, 45 days before this review. <a href="restart-review-2026-10-13.md">Read the current restart checklist and validation results.</a></p>
     </section>
 
-    <section id="goal">
-      <p class="eyebrow">Inferred goal</p><h2>What this system is supposed to do</h2>
+    <section id="intent">
+      <p class="eyebrow">Reconstructed intention</p><h2>Make a private homelab manageable by one person</h2>
+      <p>The objective is a small, integrated platform on one Ubuntu management server, operated from an administrator’s laptop and later expanded to one or two physical nodes. It should provide familiar private hostnames, browser-trusted HTTPS, centralized identity and secrets, reproducible service deployment, and recoverable state. The tool resolves the initial dependency problem until GitLab can run the management workflows itself.</p>
       <div class="grid three">
-        <article class="card"><h3>Guide a first-time homelab operator</h3><ul><li>Collect and strictly validate host, network, storage, secrets, recovery, maintenance, and paging choices.</li><li>Confirm and pin SSH identity, including an in-workflow changed-key recovery path.</li><li>Resume safely instead of demanding a clean reinstall.</li></ul></article>
-        <article class="card"><h3>Build a private platform</h3><ul><li>Install Technitium, wildcard TLS, Vault, PostgreSQL, Authentik, GitLab, MAAS, and an initial k3s cluster.</li><li>Use a single constrained Ubuntu host; TrueNAS is storage only.</li><li>Keep minimum protected runtime secret copies and allow manual Vault unseal.</li></ul></article>
-        <article class="card"><h3>Hand day-2 control to GitLab</h3><ul><li>Create the IaC project and reviewed pipelines.</li><li>Apply saved Terraform plans and migrate verified state to GitLab.</li><li>Coordinate backups, upgrades, certificates, reboots, health, and adoption without routine controller dependence.</li></ul></article>
+        <article class="card"><h3>Easy to use at home</h3><p>Internal DNS, trusted TLS, and Authentik should make private services feel ordinary to household users. Group membership should control access without separate account administration everywhere.</p></article>
+        <article class="card"><h3>Safe to change alone</h3><p>Reviewed code, saved plans, single resource ownership, pinned SSH identity, and explicit destructive boundaries make changes understandable and repeatable for one administrator.</p></article>
+        <article class="card"><h3>Recoverable during failure</h3><p>The home should retain core services before manual Vault unseal. NAS backups, offline copies, exact GitLab recovery, and a replacement-laptop kit should remove hidden dependencies on a surviving machine.</p></article>
       </div>
+      <p><b>My interpretation of “done”:</b> a complete operator journey: install → merge a useful service → enforce access → maintain it → survive reboot → recover from data or controller loss. A green stage list or remotely stored Terraform state is an intermediate milestone.</p>
+      <p class="sources">Authority: <a href="../docs/prd.md">PRD core principle, end-state vision, and 22 criteria</a>; <a href="../docs/implementation-working-agreement.md">accepted working agreement</a>; <a href="../docs/resource-ownership.md">ownership and day-2 contract</a>.</p>
     </section>
 
     <section id="architecture">
-      <p class="eyebrow">Target system diagram</p><h2>Bootstrap once, then operate through GitLab</h2>
+      <p class="eyebrow">Why this architecture exists</p><h2>Bootstrap → handoff → sustained operation</h2>
       <div class="diagram"><div class="flow">
-        <div class="node"><small>Administrator laptop</small><b>Go controller</b><p>Wizard · pinned SSH · Ansible · saved plans · encrypted recovery bundle</p></div><div class="arrow">→</div>
-        <div class="node active"><small>Single Ubuntu target</small><b>Private platform</b><p>DNS · TLS · Vault · PostgreSQL · identity · GitLab · MAAS · k3s · telemetry</p></div><div class="arrow">→</div>
-        <div class="node"><small>Day-2 authority</small><b>GitLab + Vault</b><p>Reviewed changes · HTTP state · short-lived JWT secrets · maintenance gates</p></div>
+        <div class="node active"><small>1 · Substantial implementation</small><b>Laptop orchestrates installation</b><p>Config and trust → optional storage → DNS → TLS → Vault → PostgreSQL → Authentik → GitLab → MAAS → k3s → recovery/lifecycle setup.</p></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="node"><small>2 · State transfer implemented</small><b>GitLab assumes ownership</b><p>Verify remote state and preserve protected recovery snapshots. Supply all corresponding source, credentials, and reviewed Terraform/Ansible jobs. This second half is incomplete.</p></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div class="node"><small>3 · Major integration remains</small><b>Operate and recover</b><p>Merge services and nodes; enforce identity; renew and upgrade; monitor; back up and restore; replace the laptop without replaying installation.</p></div>
       </div></div>
-      <div class="grid two" style="margin-top:16px">
-        <article class="card"><h3>Storage boundary</h3><p>TrueNAS and optional USB are Restic destinations. Neither is a compute, monitoring, or orchestration layer.</p></article>
-        <article class="card"><h3>Network boundary</h3><p>Technitium starts homelab-scoped; MAAS DHCP is off by default. The UniFi guide expands Technitium to other networks one network at a time.</p></article>
-      </div>
+      <div class="table" style="margin-top:18px"><table><caption>Responsibilities remain sensible</caption><thead><tr><th>Owner</th><th>Responsibility</th><th>Why it matters</th></tr></thead><tbody>
+      <tr><td>Go</td><td>Collect inputs, verify identities, sequence stages, show approvals, record evidence.</td><td>One orchestrator without inventing another configuration-management engine.</td></tr>
+      <tr><td>Ansible</td><td>Host packages, files, protected runtime secrets, service lifecycle, databases, backups, k3s installation.</td><td>The same runtime owner before and after handoff; GitLab should invoke it for day-2 work.</td></tr>
+      <tr><td>Terraform</td><td>Durable API objects: DNS, Vault policy/auth, Authentik, GitLab, MAAS, Kubernetes/Helm.</td><td>Track objects from first creation, avoiding dual ownership and clean-install imports.</td></tr>
+      <tr><td>GitLab / Vault / storage</td><td>Review and state / authoritative secret inventory / encrypted recovery copies.</td><td>Break recovery dependencies deliberately; TrueNAS and USB remain storage only.</td></tr>
+      </tbody></table></div>
+      <p>The tradeoffs are intentional: one management host is a shared failure domain; PostgreSQL is shared with isolated databases; manual unseal reduces external dependencies; local runtime secret copies preserve reboot availability. The next work should finish these choices, not replace the stack or add another control plane.</p>
     </section>
 
-    <section id="stages">
-      <p class="eyebrow">Implementation rail</p><h2>Stage readiness</h2>
-      <div class="rail">
-        <div class="stage"><small>0 / 0B</small><b>Config + storage</b><p>Strict schema, wizard, trust, persistence, disk safety.</p></div>
-        <div class="stage"><small>1–3</small><b>DNS · TLS · Vault</b><p>Runtime roles and recovery paths implemented.</p></div>
-        <div class="stage"><small>4–5</small><b>Postgres · Authentik</b><p>Correct final-database order; no migration branch.</p></div>
-        <div class="stage"><small>6</small><b>GitLab handoff</b><p>Saved plans, API objects, Runner, JWT, and every remote state verified.</p></div>
-        <div class="stage"><small>7–8</small><b>MAAS · k3s</b><p>MAAS API and initial k3s passed; reviewed node commission/deploy is schema-valid; physical execution remains.</p></div>
-        <div class="stage"><small>9</small><b>Lifecycle</b><p>Trial mode, manifest restore, GitLab recovery, maintenance, telemetry, and controller bundle passed.</p></div>
+    <section id="achieved">
+      <p class="eyebrow">What has actually been built</p><h2>The foundation deserves to be kept</h2>
+      <div class="grid two">
+        <article class="card"><h3>Installation and trust</h3><p>Concrete Go stages and Ansible roles cover the platform. Strict shared SSH pinning, explicit changed-key recovery, protected config/secret writes, architecture branches, and final PostgreSQL-before-Authentik topology have focused source coverage.</p><p class="sources"><a href="../internal/ssh/trust.go">SSH trust</a> · <a href="../internal/config/write.go">Protected writes</a> · <a href="../ansible/playbooks/site.yml">Stage chain</a></p></article>
+        <article class="card"><h3>Terraform handoff</h3><p>Stage-aligned roots, saved-plan approval, remote lineage/serial/payload comparison, protected local snapshots, and post-handoff local mutation guards are substantive implementation, with focused tests.</p><p class="sources"><a href="../internal/terraform/runner.go">Runner</a> · <a href="../internal/terraform/runner_test.go">Handoff tests</a></p></article>
+        <article class="card"><h3>Selected disaster recovery</h3><p>The August record gives specific evidence for native GitLab full-loss restore, canary removal, shared-database isolation, eight recovered states, failure/resume, and explicit unfreeze. Core reboot/manual-unseal and isolated Restic restore are also recorded.</p><p class="sources"><a href="../docs/gitlab-disaster-recovery.md">Recorded destructive drill</a> · <a href="../docs/reboot-recovery.md">Reboot record</a></p></article>
+        <article class="card"><h3>Clear operating decisions</h3><p>Trial mode, storage-only NAS, lab-scoped network changes, review-first upgrades, bounded monitoring, and single-administrator recovery are well articulated. The main problem is uneven completion and evidence, not a lack of intent.</p><p class="sources"><a href="../docs/implementation-working-agreement.md">Decision register and evidence vocabulary</a></p></article>
       </div>
+      <div class="note"><b>Historical evidence is narrower than a product acceptance:</b> the August “full QEMU” run exercised the bootstrap stages. It did not establish every day-2 success criterion. The evidence for bundle opening does not establish blank-laptop adoption; full-backup restore does not establish newer-checkpoint reconciliation.</div>
     </section>
 
-    <section id="gaps">
-      <p class="eyebrow">Current gap register</p><h2>What genuinely remains after closing P0 and P1 source work</h2>
-      <p class="intro">There are no known source-level P0 or P1 blockers. Ownership, full-run, reboot, backup, destructive GitLab recovery, adoption MR, and MAAS deployment gaps are closed by implementation and proportionate disposable evidence. The rows below are P2 improvements or external acceptance boundaries—not reopened product decisions.</p>
-      <div class="table"><table><thead><tr><th>State</th><th>Gap</th><th>Current evidence</th><th>Exit condition</th></tr></thead><tbody>
-        <tr><td><span class="state partial">P2 review</span></td><td><b>Post-deployment SSH confirmation and k3s join</b></td><td>The MR pipeline now applies both <code>maas_machine</code> registration/commissioning and <code>maas_instance</code> OS deployment. The generated root is schema-validated. A reinstalled host has a new SSH identity, and silently accepting it in CI would contradict the settled fingerprint policy.</td><td>Design an in-workflow confirmation that presents the replacement fingerprint, records explicit intent, and only then runs the k3s agent join; prove it with a second node.</td></tr>
-        <tr><td><span class="state partial">P2 / external</span></td><td><b>TrueNAS, USB, UniFi, and provider paging acceptance</b></td><td>Policies, guards, target-local compute boundary, UniFi guide, provider formats, and local-only Restic restore are implemented. No real external system was mutated.</td><td>Run deliberate operator-approved hardware/network drills: NAS loss and identity mismatch, USB copy/unmount, network-by-network DNS rollout/rollback, and one selected paging provider.</td></tr>
-        <tr><td><span class="state partial">P2 / external</span></td><td><b>Physical PXE and x86_64 acceptance</b></td><td>ARM64 controller/QEMU integration passed and the Canonical MAAS 2.8.0 schema accepts the generated commission/deploy root. User-mode QEMU cannot faithfully prove a real VLAN PXE boot or BMC power cycle.</td><td>Merge a reviewed adoption MR for an explicitly authorized spare node; observe commission, Ubuntu deployment, reboot, and new fingerprint on the lab VLAN. Repeat the core install on x86_64.</td></tr>
-        <tr><td><span class="state partial">P2</span></td><td><b>Complete supply-chain pinning</b></td><td>k3s and several services are pinned; some containers/packages/providers still use broad constraints or tags.</td><td>Every downloaded artifact follows an explicit pin, checksum/signature, update, and rollback policy.</td></tr>
-        <tr><td><span class="state partial">P2</span></td><td><b>Expand repeatable CI integration coverage</b></td><td>The full controller, interrupted resume, reboot, trial mode, local Restic restore, and adoption were proven manually against the disposable ARM64 stack; only a smaller subset is automated in CI.</td><td>Promote representative full, secondary-disk, backup-disabled, recovery, and adoption mock cases into bounded CI jobs.</td></tr>
-        <tr><td><span class="state partial">P2</span></td><td><b>Advanced wizard editing</b></td><td>Accepted defaults round-trip and every option is available in strict YAML; the first-run flow intentionally asks only essential questions.</td><td>Add an optional advanced screen for backup intervals, maintenance windows, retention, and paging thresholds without burdening trial users.</td></tr>
+    <section id="criteria">
+      <p class="eyebrow">Completeness against the product contract</p><h2>Every PRD success criterion, assessed</h2>
+      <p>No percentage is assigned: a missing recovery artifact or service deployment path cannot be averaged away by several successful installation stages. “Core implemented” is a source assessment, not a claim of real-homelab acceptance. “Partial” includes both working code and an identified gap.</p>
+      <div class="filters" role="group" aria-label="Filter success criteria">
+        <button type="button" data-filter="all" aria-pressed="true">All 22</button>
+        <button type="button" data-filter="missing" aria-pressed="false">Missing workflows</button>
+        <button type="button" data-filter="partial" aria-pressed="false">Partial</button>
+        <button type="button" data-filter="core" aria-pressed="false">Core implemented</button>
+        <button type="button" data-filter="proof" aria-pressed="false">External proof due</button>
+        <span id="criterion-count" aria-live="polite">Showing 22 of 22 criteria</span>
+      </div>
+      <div class="table criteria"><table><caption>PRD success criteria 1–22 · Current uncommitted GitOps worktree; September 5 baseline is historical</caption><thead><tr><th scope="col">SC</th><th scope="col">Intended outcome</th><th scope="col">Assessment</th><th scope="col">Evidence and practical limit</th></tr></thead><tbody><tr data-status="partial"><td>1</td><td>Guided fresh installation</td><td><span class="state partial">Partial</span></td><td>Core installer exists; backup/paging choices and dashboard setup do not meet the complete guided experience. ARM64 installation is historically recorded. <a href="#F7">F7</a></td></tr>
+<tr data-status="partial"><td>2</td><td>Merge service → deployment in &lt;10 min</td><td><span class="state partial">Implemented; acceptance pending</span></td><td>Service definitions now drive DNS, Authentik, Helm, TLS routing and health. Complete GitLab merge-to-ready timing remains unverified. <a href="#F1">F1</a></td></tr>
+<tr data-status="partial"><td>3</td><td>Web service requires Authentik login</td><td><span class="state partial">Component verified</span></td><td>The shipped OAuth2 gateway redirects anonymous users and enforces OIDC group access in a disposable test. Combined real-Authentik deployment acceptance remains pending. <a href="#F1">F1</a></td></tr>
+<tr data-status="missing"><td>4</td><td>Native protocol access with group control</td><td><span class="state open">Missing workflow</span></td><td>No native-protocol authorization adapter found. Authentik application bindings alone do not enforce Minecraft or another protocol. <a href="#F1">F1</a></td></tr>
+<tr data-status="partial"><td>5</td><td>Audit server and open reviewed adoption MR</td><td><span class="state partial">Partial</span></td><td>SSH audit, BMC metadata collection, draft MR, token refresh, and duplicate guards exist. BMC reachability/power capability is not established by metadata discovery. <a href="#F1">F1</a></td></tr>
+<tr data-status="partial"><td>6</td><td>Merged node becomes a deployment target</td><td><span class="state partial">Partial</span></td><td>MAAS register/commission/deploy resources exist. Fingerprint-confirmation continuation and k3s agent join are absent; physical PXE also remains unproven. <a href="#F1">F1</a></td></tr>
+<tr data-status="partial"><td>7</td><td>Adults/kids access follows each definition</td><td><span class="state partial">Web access verified</span></td><td>Allowed and denied synthetic groups are tested against the actual gateway image. Native-protocol group adapters remain missing. <a href="#F1">F1</a></td></tr>
+<tr data-status="partial"><td>8</td><td>Vault inventory and protected secret handling</td><td><span class="state partial">CI inventory implemented</span></td><td>Provider and runtime credentials are inventoried in Vault; CI obtains project-bound tokens. The MAAS GitLab-secret-variable write was removed. A complete historical secret audit is not claimed. <a href="#F1">F1</a></td></tr>
+<tr data-status="proof"><td>9</td><td>Same source supports ARM and x86 Ubuntu</td><td><span class="state proof">External proof due</span></td><td>Architecture branches exist; August records cover ARM64. x86 installation and resource measurements are not established by this review.</td></tr>
+<tr data-status="partial"><td>10</td><td>Trusted TLS, renewal, and Vault distribution</td><td><span class="state partial">Partial</span></td><td>Issuance and local renewal exist; normal renewal leaves Vault sync pending even when Vault is available. Public-CA acceptance remains separate. <a href="#F8">F8</a></td></tr>
+<tr data-status="partial"><td>11</td><td>Safe no-change rerun</td><td><span class="state partial">Partial</span></td><td>Historical core rerun/resume evidence exists. Lifecycle Check tests marker/timers, not desired config, so changed schedules or policy can be skipped. <a href="#F7">F7</a></td></tr>
+<tr data-status="core"><td>12</td><td>Remote target by IP or hostname</td><td><span class="state done">Core implemented</span></td><td>SSH orchestration, shared pinned trust, address handling, and config tests exist; remote QEMU targeting is historically recorded.</td></tr>
+<tr data-status="core"><td>13</td><td>Vault recovery file and secure-storage warning</td><td><span class="state done">Core implemented</span></td><td>Explicit external recovery path, protected writes, retained initialization material, and warning behavior exist.</td></tr>
+<tr data-status="partial"><td>14</td><td>All management moves into GitLab IaC</td><td><span class="state partial">Implemented; acceptance pending</span></td><td>GitLab now receives core roots and host/runtime jobs. Existing remote-state reuse is tested; the combined core-change merge is the remaining acceptance gate. <a href="#F1">F1</a></td></tr>
+<tr data-status="proof"><td>15</td><td>Lab-only bootstrap and deliberate DNS/DHCP rollout</td><td><span class="state proof">External proof due</span></td><td>Safe defaults, validation, and UniFi instructions exist. Whole-home rollout/rollback and physical VLAN DHCP acceptance remain external.</td></tr>
+<tr data-status="partial"><td>16</td><td>Guided NAS backup and verified USB copy</td><td><span class="state partial">Partial</span></td><td>Restic timers/copy and config fields exist; no wizard profile. Artifact coverage, mount identity, and USB UUID/unmount behavior need work before hardware proof. <a href="#F2">F2</a></td></tr>
+<tr data-status="partial"><td>17</td><td>Trial mode and sealed-Vault reboot recovery</td><td><span class="state partial">Partial</span></td><td>Trial/core reboot/unseal are historically exercised. With a retained Vault backup token, sealed-Vault snapshot failure exits before non-Vault artifacts reach Restic. <a href="#F2">F2</a></td></tr>
+<tr data-status="partial"><td>18</td><td>Atomic renewal with consumer rollback</td><td><span class="state partial">Partial</span></td><td>Staging, SAN/key checks, symlink activation, and rollback handler exist. Healthy-Vault sync and complete consumer identity/failure checks remain incomplete. <a href="#F8">F8</a></td></tr>
+<tr data-status="partial"><td>19</td><td>Review/deadline upgrades with safety gates</td><td><span class="state partial">Partial</span></td><td>Security-only unattended upgrades and a maintenance dispatcher exist. Renovate proposals, component hooks, and key policy gates are missing. <a href="#F5">F5</a></td></tr>
+<tr data-status="partial"><td>20</td><td>Bounded monitoring, retention, optional paging</td><td><span class="state partial">Partial</span></td><td>Containers, budgets, basic health JSON, and direct paging exist. Dashboard access, required state checks, retention wiring, and delivery semantics remain incomplete. <a href="#F6">F6</a></td></tr>
+<tr data-status="partial"><td>21</td><td>Exact GitLab recovery and post-apply checkpoint</td><td><span class="state partial">Partial</span></td><td>Full-backup restore/freeze/unfreeze has specific historical evidence. Commit-bound critical checkpoints and expected-state verification do not meet the contract. <a href="#F3">F3</a></td></tr>
+<tr data-status="partial"><td>22</td><td>Blank laptop recovery and explicit adoption</td><td><span class="state partial">Partial</span></td><td>Bundle creation/opening protects the SSH key. Portable recovery metadata, target audit/adoption, and compromised-controller rotation are missing. <a href="#F4">F4</a></td></tr></tbody></table></div>
+    </section>
+
+    <section id="findings">
+      <p class="eyebrow">Where the previous verdict was too broad</p><h2>Implementation progress and retained review notes</h2>
+      <p>The active blocker is the end-to-end operating workflow in F1. F2 and F4–F8 retain September 5 source observations as historical follow-ups and were not reassessed in this September 28 GitOps update. F3 and F9 are updated below where current implementation changes their facts; none of these follow-ups is promoted above the two requested product outcomes.</p>
+      <details class="card finding" id="F1" open><summary><span class="state partial">F1 · Acceptance pending</span>GitLab management and authenticated web-service paths are implemented</summary>
+<p><b>Core handoff:</b> the generated project now includes Go, Terraform, Ansible, charts, tests, pinned tools and public platform configuration. A final bootstrap stage stores provider/runtime credentials in Vault and installs an independently authorized root-owned helper. CI uses project-bound ID tokens, protected-main apply, existing HTTP state, saved plans and one reconciliation lease through the checkpoint hook.</p>
+<p><b>Useful web service:</b> service YAML now drives existing DNS and Authentik owners, Helm workloads, an OAuth2 Proxy gateway, namespace access policies, wildcard-TLS nginx routes and functional health checks. Chart validation rejects independent exposure that would bypass group enforcement. Native-protocol and bare-metal adapters remain unimplemented; this web path does not claim to cover them.</p>
+<p><b>Evidence to date:</b> September 27 source linting, generated-project validation, and access tests passed. On September 28, the source and integration doctors passed, and the actual disposable-guest administrator-preservation probe passed. Earlier generated-project, Terraform, and gateway component results remain component evidence; August QEMU records are historical.</p>
+<p><b>October 4 status correction:</b> the scanner fix worked. The September 28 guest log records seven verified component state handoffs and completed GitLab and MAAS stages. At 14:26:51 UTC, k3s binary download failed with a read timeout. The binary and final GitOps runtime marker are absent; no bootstrap process is running. Both pinned release URLs now respond, which does not yet prove a full download.</p>
+<p><b>October 13 source correction:</b> k3s retries, current-SHA plans, failed-pipeline recovery, installed-Authentik tests, interrupted reconciliation and seed-source comparison now exist. The release runner is not fully connected: its tests have one failure and two errors, its merge-fixture invocation omits the required source fingerprint, and the new evidence gates are not collected. Docker is stopped and the guest SSH probe fails; the current guest stage was not inspected. <a href="restart-review-2026-10-13.md">Exact restart findings</a>.</p>
+<p><b>Remaining completion test:</b> repair release-runner wiring and its regression fixtures, resume the existing disposable guest and final handoff, then run the combined GitLab MR → plan → merge → DNS/TLS/Auth/Helm/host journey. Prove actual Authentik allowed/denied groups, a core DNS and host-policy change without the original laptop, service removal, no-change rerun and interrupted resume. Retain timings and source-bound sanitized evidence, then prove a fresh installation. No full MR journey has passed; node expansion remains outside this scope.</p>
+<p class="sources"><b>Source trail:</b> <a href="../docs/gitops.md">Implementation and validation contract</a> · <a href="../internal/gitops/runner.go">GitOps runner</a> · <a href="../gitops/gitlab-ci.yml">Generated pipeline</a> · <a href="../ansible/playbooks/day2.yml">Host reconciliation</a> · <a href="../gitops/examples/whoami.yaml">Runnable web example</a> · <a href="../internal/gitops/access_integration_test.go">Allowed/denied access test</a></p></details>
+<details class="card finding" id="F2" open><summary><span class="state open">F2 · Follow-up</span>A valid backup manifest does not establish a complete recovery set</summary><p><b>Expected:</b> required native artifacts for every enabled component, correct storage identity, and recoverable non-Vault components while Vault is sealed.</p>
+<p><b>Observed:</b> the backup script creates a k3s etcd snapshot but never copies that snapshot into its Restic staging tree. It copies <code>/etc/technitium</code>, while the actual DNS data bind mount is <code>/opt/technitium/data</code> or the configured data disk path. It copies <code>/opt/authentik</code> without following the configured alternate media path. No Kuma/Beszel configuration copy appears. Several copy failures are swallowed with <code>|| true</code>; the manifest hashes whatever happened to be staged.</p>
+<p><b>Example:</b> all 30 hashes from the previous isolated restore can verify while Technitium zones and k3s recovery snapshots were never included. Hash verification proves integrity of included files, not coverage of the required artifact inventory.</p>
+<p>When a Vault backup-token file exists but Vault is sealed, <code>vault token renew</code> or snapshot creation fails under <code>set -e</code>, before <code>restic backup</code> and the final status update. An earlier complete status can remain. The primary setup writes the “immutable” repository identity on each convergence; it does not compare and preserve an existing pin. Mount checks do not compare the expected NAS source, and the USB script neither validates a filesystem UUID nor unmounts after copying.</p>
+<p><b>Completion test:</b> put a unique canary in every required component, back up both default and secondary-disk layouts, destroy disposable state, restore it, and recover the canaries. Inject sealed Vault with an existing token, missing mounts, swapped repositories, and disconnected USB. Require explicit per-component results and a coverage manifest that fails on missing required artifacts.</p><p class="sources"><b>Source trail:</b> <a href="../docs/backup-recovery.md">Required backup set and NAS/USB contract</a> · <a href="../ansible/roles/backup_install/templates/bootstrap-backup.sh.j2">Backup staging and status</a> · <a href="../ansible/roles/backup_install/tasks/main.yml">Repository identity handling</a> · <a href="../ansible/roles/backup_install/templates/bootstrap-backup-copy-usb.sh.j2">USB copy</a> · <a href="../ansible/roles/technitium_dns/templates/docker-compose.yml.j2">Actual DNS data mount</a> · <a href="../ansible/roles/authentik_install/templates/docker-compose.yml.j2">Authentik data paths</a></p></details>
+<details class="card finding" id="F3" open><summary><span class="state open">F3 · Follow-up</span>The critical checkpoint and unfreeze gate are weaker than the accepted recovery contract</summary><p><b>Working foundation:</b> named incidents, persistent GitLab freeze, exact installed-version comparison, native restore, shared-database isolation, application checks, and explicit unfreeze. The August record describes a destructive canary restore and eight recovered states; that remains useful historical evidence.</p>
+<p><b>Observed gap:</b> <code>bootstrap-gitlab-checkpoint</code> simply executes the ordinary full backup. There is no separate commit-bound Git bundle/state export in tmpfs, reopen verification, or newer-checkpoint reconciliation. A busy backup lock exits successfully without creating a new snapshot. The current generated pipeline correctly holds one <code>platform-reconcile</code> resource-group lease through apply, host reconciliation, health checks, and checkpoint, so another pipeline apply cannot interleave there. The checkpoint itself still does not receive or record <code>CI_COMMIT_SHA</code>.</p>
+<p>The restore verifier prints the current critical commit and recovered state metadata but only checks that states exist and have a lineage/serial. It does not compare the expected set, commit, lineage, or serial from a recovery manifest before writing the verified marker. Read-only drift plans, OIDC login, and a Runner canary are absent from that gate.</p>
+<p><b>Completion test:</b> two queued applies with an overlapping nightly backup must produce distinct verified checkpoints tied to each applied commit and state set. Restore an older full backup plus the newer checkpoint. Inject a missing workspace, wrong lineage, and unrelated Git commit; each must keep automation frozen. Treat this as source work as well as a missing drill.</p><p class="sources"><b>Source trail:</b> <a href="../docs/gitlab-disaster-recovery.md">Critical checkpoint and verification contract; August evidence</a> · <a href="../ansible/roles/backup_install/tasks/main.yml">Checkpoint wrapper</a> · <a href="../ansible/roles/backup_install/templates/bootstrap-backup.sh.j2">Backup lock and staging</a> · <a href="../ansible/roles/backup_install/templates/bootstrap-gitlab-recovery.sh.j2">verify_gitlab and unfreeze</a> · <a href="../gitops/gitlab-ci.yml">Single reconciliation lease</a></p></details>
+<details class="card finding" id="F4"><summary><span class="state open">F4 · Follow-up</span>Controller recovery currently opens a bundle; it does not recover a controller</summary><p><b>Working foundation:</b> checksummed archive, protected writes, independently encrypted SSH key using Argon2id/AES-GCM, password rejection, and isolated restore staging. The archive itself is gzip; the SSH key has its own encryption, and Restic supplies repository encryption.</p>
+<p><b>Observed:</b> the bundle contains serialized config, known hosts, the optional encrypted SSH key, and a small manifest. It lacks the accepted controller/target identity markers, source/release verification reference, ownership/backend checkpoint metadata, recovery instructions, and path relocation. Configuration retains the original laptop’s absolute paths. <code>recover-controller</code> ends after extraction with an instruction to inspect before adoption; no controller-adoption command, target audit flow, or compromised-controller rotation is implemented there.</p>
+<p><b>Concrete consequence:</b> successfully decrypting the SSH key on a temporary directory does not prove that a blank laptop can reconstruct the handoff guards and manage the existing target without replaying bootstrap. Server adoption into MAAS is a different operation and does not fill this gap.</p>
+<p><b>Completion test:</b> a blank disposable controller with a different username and no old home directory must use only the documented recovery kit to verify identity, reconstruct configuration/state references, audit without mutation, and explicitly adopt. Test preserved-credential recovery and a synthetic compromised-controller rotation separately.</p><p class="sources"><b>Source trail:</b> <a href="../docs/controller-recovery.md">Accepted bundle, audit, adoption, and rotation contract</a> · <a href="../internal/recovery/bundle.go">Bundle contents and Restore</a> · <a href="../internal/stages/stage9_controller_recovery.go">Bundle refresh and target copy</a> · <a href="../cmd/bootstrap/main.go">recover-controller command</a> · <a href="../internal/recovery/bundle_test.go">Current bundle tests</a></p></details>
+<details class="card finding" id="F5"><summary><span class="state open">F5 · Follow-up</span>Application upgrades have a dispatcher, not the promised maintenance system</summary><p><b>Working foundation:</b> security-only unattended Ubuntu updates, disabled automatic reboot, a timer, protected proposal/hook directories, deadline fields, incident/backup checks, and a host-side executor.</p>
+<p><b>Observed:</b> no Renovate configuration or proposal producer is present, and no component upgrade hooks are installed. The dispatcher reads hand-authored proposal deadlines but does not consume the effective policy JSON to derive them. It does not enforce the configured admission-window end, rejected versions, backup freshness, major/stateful classification, vendor upgrade stops, compatibility, migrations, health, or rollback. It trusts a proposal’s <code>requires_backup</code> flag and then runs a root-owned hook if one exists.</p>
+<p><b>Consequence:</b> the default <code>application_upgrades_enabled: true</code> can enable a timer that has no actual upgrades to process. This is incomplete accepted behavior, not a reason to reopen the chosen review/deadline policy.</p>
+<p><b>Completion test:</b> one stateless fixture and one stateful fixture traverse proposal → review/deadline → scheduled execution → health/rollback. Prove rejection, stale backup, expired window, unsupported version path, and prior failure all block mutation; prove GitLab’s own executor survives GitLab downtime.</p><p class="sources"><b>Source trail:</b> <a href="../docs/upgrade-policy.md">Accepted upgrade policy</a> · <a href="../ansible/roles/maintenance_install/tasks/main.yml">Installed maintenance files</a> · <a href="../ansible/roles/maintenance_install/templates/bootstrap-maintenance.sh.j2">Dispatcher gates</a> · <a href="../ansible/roles/maintenance_install/templates/upgrade-policy.json.j2">Effective policy output</a></p></details>
+<details class="card finding" id="F6"><summary><span class="state partial">F6 · Product gap</span>Monitoring is a useful minimum, but key visibility and paging behavior are missing</summary><p><b>Working foundation:</b> bounded Kuma/Beszel containers, local agent, health JSON, consecutive-failure counters, direct provider payloads, journald retention, and a documented inability to page through total host loss. The newer observability document explicitly accepts manual first-user dashboard setup; this review does not count that acknowledged choice as an undiscovered defect.</p>
+<p><b>Observed gaps:</b> the health adapter does not consume backup age/completeness, USB age, upgrade blockers, reboot age, or certificate-sync state. It treats sealed Vault as a failed health request; with paging enabled, repeated failures can become a generic critical alert instead of the accepted sealed/degraded handling. Delivery uses curl without HTTP failure handling and advances notification state even after an unsuccessful send, so an alert can be suppressed before it was delivered.</p>
+<p>Kuma’s retention input is passed from Go but not applied by the role. Required dashboard DNS/TLS/Authentik access is not wired: the nginx template has no uptime/Beszel virtual hosts, and Stage 5 only creates Vault/GitLab OIDC applications. Resource quotas exist; the proposed pressure-response sequence and load-measurement acceptance are incomplete.</p>
+<p><b>Completion test:</b> synthetic sealed Vault, stale backup, overdue upgrade, and failed notification delivery must produce distinct correct states. Retry failed sends, verify trigger/recovery semantics, prove seven-day retention, and exercise authenticated dashboard access. Real provider delivery follows those local fixtures.</p><p class="sources"><b>Source trail:</b> <a href="../docs/observability.md">Accepted minimum and remaining monitoring contract</a> · <a href="../ansible/roles/observability_install/templates/bootstrap-health-adapter.sh.j2">Actual checks and notification state</a> · <a href="../ansible/roles/observability_install/tasks/main.yml">Dashboard runtime configuration</a> · <a href="../ansible/roles/tls_lego/templates/bootstrap-home-infra.nginx.j2">TLS routes</a> · <a href="../internal/stages/stage5_authentik.go">Configured OIDC applications</a></p></details>
+<details class="card finding" id="F7"><summary><span class="state partial">F7 · Product gap</span>The wizard and lifecycle convergence do not implement the full configuration promise</summary><p><b>Observed:</b> the wizard collects host/domain/network basics and bootstrap secrets, but has no backup-enable choice, destination, schedule/retention editor, paging choice, or test alert. New config starts with backups and paging disabled. Round-tripping pre-existing YAML values is useful, but does not implement the accepted first-run backup profile (PRD 16).</p>
+<p><code>LifecycleStage.Check</code> checks a version marker, helper existence, and selected enabled/running units. It does not compare a desired configuration digest. Changing retention or the maintenance schedule while keeping the same enabled features can therefore be treated as complete and skipped. Disabling upgrades/monitoring also lacks an inverse check that ensures the old enabled runtime is removed or stopped.</p>
+<p><b>Completion test:</b> complete a new wizard with the recommended backup profile and with an explicit trial choice. Change one setting after installation and prove exactly the intended convergence, then prove a zero-change rerun. Include enable → disable transitions. Align the ordinary day-2 entry point with the reviewed GitLab ownership contract.</p><p class="sources"><b>Source trail:</b> <a href="../docs/backup-recovery.md">Wizard interaction contract</a> · <a href="../internal/tui/wizard.go">Actual field list</a> · <a href="../internal/config/wizard.go">Defaults and preservation mapping</a> · <a href="../internal/config/config.go">Effective feature defaults</a> · <a href="../internal/stages/stage9_lifecycle.go">Lifecycle Check and Run</a></p></details>
+<details class="card finding" id="F8"><summary><span class="state partial">F8 · Product gap</span>Certificate renewal still depends on a manual synchronization step</summary><p><b>Working foundation:</b> host timer, file-based Cloudflare credential, renewal staging, hostname/key/expiry checks, atomic active-version switch, and rollback trap.</p>
+<p><b>Observed:</b> every successful renewal touches <code>certificate-vault-sync-pending</code>; it never tries to update an available Vault. The implemented synchronization is in the operator’s <code>bootstrap vault reconcile</code> command. Thus normal renewal can leave the authoritative Vault certificate stale even when Vault was unsealed throughout.</p>
+<p>Some reload errors are ignored; the Vault curl check does not reject HTTP failure statuses. The script does not verify the served certificate identity for every TLS consumer or validate the full candidate chain as required by the decision. Those source gaps remain even if initial issuance was proven with Pebble.</p>
+<p><b>Completion test:</b> renew with Vault healthy and sealed; healthy Vault must receive the same new fingerprint automatically, and sealed Vault must defer safely and synchronize on recovery. Inject each consumer’s reload/identity failure and prove rollback to the previous served certificate.</p><p class="sources"><b>Source trail:</b> <a href="../docs/certificate-renewal.md">Renewal and consumer validation contract</a> · <a href="../ansible/roles/tls_lego/templates/bootstrap-renew-certificate.sh.j2">Renewal and pending marker</a> · <a href="../cmd/bootstrap/main.go">vault reconcile implementation</a></p></details>
+<details class="card finding" id="F9"><summary><span class="state partial">F9 · Assurance gap</span>CI and the documentation do not yet support a reproducible completeness claim</summary><p><b>Recorded result:</b> September 27 source linting, generated-project validation, and access tests passed. These are focused evidence, not a new September 28 full lint claim.</p>
+<p><b>October 13 correction:</b> local source gates and generated-project tests passed freshly. The pending CI changes now validate the seven child roots, generated IaC and generated-project tools through the repository tasks. The older coverage observation below is historical. Release-runner fixtures still fail and complete disposable/hardware acceptance is unproven.</p>
+<p><b>Coverage gap:</b> GitHub CI validates <code>terraform/environments/bootstrap</code> rather than its seven child roots, and omits <code>scripts/validate-generated-iac.sh</code>. No QEMU/Molecule integration job is declared. The generated-IaC validator uses an empty nodes directory, so it does not exercise the nonempty adoption lifecycle. Many critical shell workflows have no focused automated failure fixtures. August integration results are narratives, not a checked-in raw evidence bundle tied to an exact source revision.</p>
+<p><b>Toolchain gap:</b> the checked-in Hermit toolchain now pins Go 1.26.1, Terraform 1.14.7, and Helm 3.19.1 alongside Just, Python, and uv. That corrects the earlier pinning finding. CI coverage and evidence capture remain incomplete, and Technitium still uses <code>:latest</code>.</p>
+<p><b>Documentation drift:</b> the post-bootstrap README instructs manual monolithic migration and local-state deletion, contradicting the accepted split-root, retained-snapshot handoff. The architecture/spec status headers remain from March. CLAUDE.md has the old stage order and excludes monitoring, contrary to the later working agreement. The previous review’s “no blocking implementation session remains” is not supported by the wider product contract.</p>
+<p><b>Completion test:</b> make local and CI gates identical, run them from a clean declared toolchain, and archive redacted fresh-install/rerun/interruption and recovery evidence with commit/profile/tool versions. Correct status summaries and obsolete procedures using the newer accepted decisions.</p><p class="sources"><b>Source trail:</b> <a href="../.github/workflows/ci.yml">CI validation loop</a> · <a href="../justfile">Broader local gates</a> · <a href="../scripts/validate-generated-iac.sh">Empty-node generated root fixture</a> · <a href="../bin/README.hermit.md">Hermit environment</a> · <a href="../terraform/environments/post-bootstrap/README.md">Obsolete migration procedure</a> · <a href="../docs/resource-ownership.md">Current retained-state contract</a> · <a href="../CLAUDE.md">Older conflicting instructions</a></p></details>
+    </section>
+
+    <section id="examples">
+      <p class="eyebrow">What this means for an administrator</p><h2>Four ordinary scenarios expose the boundary</h2>
+      <div class="table"><table><thead><tr><th>Scenario</th><th>Intended experience</th><th>Current source boundary</th></tr></thead><tbody>
+        <tr><td>Add a private web app</td><td>Merge the documented service YAML; browse its trusted hostname; adults can log in and an unauthorized user cannot.</td><td>The generated pipeline now consumes web-service YAML and reconciles its full web path. Component tests pass; combined merge acceptance remains pending. <a href="#F1">F1</a></td></tr>
+        <tr><td>Return after a month away</td><td>Approved/overdue updates progress through maintenance gates; failed backups or blocked updates are visible.</td><td>The maintenance queue has no producer/hooks, and health JSON omits backup/upgrade status. <a href="#F5">F5</a>, <a href="#F6">F6</a></td></tr>
+        <tr><td>Lose the management disk</td><td>Restore native artifacts and exact GitOps state from the NAS, then resume with reviewed evidence.</td><td>Successful file hashes do not recover artifacts that were omitted. GitLab’s full-backup drill is stronger than the whole-platform recovery evidence. <a href="#F2">F2</a>, <a href="#F3">F3</a></td></tr>
+        <tr><td>Replace the laptop</td><td>Open the kit, verify the target, relocate local paths, audit, explicitly adopt, and retain or rotate access as chosen.</td><td>The CLI extracts config/trust/key files, then stops. It does not perform the adoption contract. <a href="#F4">F4</a></td></tr>
       </tbody></table></div>
     </section>
 
     <section id="decisions">
-      <p class="eyebrow">Decision register</p><h2>Settled—do not reopen as gaps</h2>
-      <div class="grid three">
-        <article class="card decision"><div class="meta">Accepted · secrets</div><h3>Vault authoritative, pragmatic runtime copies</h3><p>Preserve rerun material; manual 3-of-5 unseal is acceptable. A password manager may hold the init JSON. SPIFFE/SPIRE is deferred.</p></article>
-        <article class="card decision"><div class="meta">Accepted · trust</div><h3>One-time fingerprint confirmation</h3><p>Changed keys stop and notify the operator; the workflow can replace the pin only after explicit confirmation.</p></article>
-        <article class="card decision"><div class="meta">Accepted · network</div><h3>Homelab first, UniFi rollout guide</h3><p>MAAS DHCP is opt-in. Technitium can later serve the full home through network-by-network UniFi configuration.</p></article>
-        <article class="card decision"><div class="meta">Accepted · data</div><h3>PostgreSQL before Authentik</h3><p>Authentik starts directly on its final isolated database. The temporary database migration was eliminated.</p></article>
-        <article class="card decision"><div class="meta">Accepted · backup</div><h3>Restic to TrueNAS, optional USB, trial mode</h3><p>Defaults are presented and configurable. A first-time user can run without a backup destination, with an explicit degraded marker.</p></article>
-        <article class="card decision"><div class="meta">Accepted · lifecycle</div><h3>Review-first upgrades with deadlines</h3><p>Maintenance windows may auto-approve overdue application upgrades. OS security updates are automatic; reboots remain gated.</p></article>
-        <article class="card decision"><div class="meta">Accepted · telemetry</div><h3>Bounded local observability</h3><p>Telemetry runs on the target, never TrueNAS; 7-day maximum raw retention, tight CPU/memory budgets, optional free paging.</p></article>
-        <article class="card decision"><div class="meta">Accepted · recovery</div><h3>Portable controller recovery</h3><p>The separately encrypted SSH key and checksummed bundle support a read-only audit before explicit adoption.</p></article>
-        <article class="card decision"><div class="meta">Accepted · ownership</div><h3>Ansible runtime, Terraform API objects</h3><p>Go orchestrates. Ansible owns host/service lifecycle. Terraform owns durable API resources from first creation; clean bootstrap has no imports.</p></article>
+      <p class="eyebrow">Interpretation without reopening settled decisions</p><h2>Keep the design; correct the completion claims</h2>
+      <div class="grid two">
+        <article class="card decision"><div class="meta">Accepted and still appropriate</div><h3>Single administrator, constrained host</h3><p>Keep manual Shamir unseal, protected local runtime secrets, storage-only TrueNAS/USB, supported trial mode, host-local bounded monitoring, lab-first DNS, and opt-in MAAS DHCP. No demand for HA, public ingress, auto-unseal, or a new telemetry stack follows from this review.</p></article>
+        <article class="card decision"><div class="meta">Scope boundary</div><h3>Finish v1 before expanding it</h3><p>The PRD mentions Proxmox VM/LXC examples but explicitly excludes Proxmox VM lifecycle from v1. Treat those examples as future extension points, not a release blocker. General service deployment, access control, maintenance, and recovery are explicitly in the accepted v1 outcome.</p></article>
       </div>
-    </section>
-
-    <section id="evidence">
-      <p class="eyebrow">Evidence from this checkout</p><h2>Source and ARM64 disposable integration revalidated 27 August</h2>
-      <div class="grid checks">
-        <div class="check"><b>✓ Conflict scan</b><small>No markers</small></div><div class="check"><b>✓ Go format</b><small>Clean</small></div>
-        <div class="check"><b>✓ Go tests</b><small>Project packages</small></div><div class="check"><b>✓ Go build/vet</b><small>Pass</small></div>
-        <div class="check"><b>✓ Terraform fmt</b><small>Recursive</small></div><div class="check"><b>✓ Ansible syntax</b><small>Full site</small></div>
-        <div class="check"><b>✓ Terraform validate</b><small>Every root</small></div><div class="check"><b>✓ Ansible lint</b><small>Production profile</small></div>
-        <div class="check"><b>✓ Full QEMU</b><small>All stages + handoffs</small></div><div class="check"><b>✓ No-change rerun</b><small>All owned stages skip</small></div>
-        <div class="check"><b>✓ Resume + reboot</b><small>Manual unseal/reconcile</small></div><div class="check"><b>✓ Restic restore</b><small>2.016 GiB · 30 hashes</small></div>
-        <div class="check"><b>✓ GitLab loss restore</b><small>Exact commit · 8 states · unfreeze</small></div><div class="check"><b>✓ Adoption MR</b><small>Refresh + duplicate guard</small></div>
-        <div class="check"><b>✓ MAAS generated IaC</b><small>2.8.0 schema valid</small></div><div class="check"><b>✓ Controller bundle</b><small>Verified isolated open</small></div>
-      </div>
-      <div class="note"><b>Evidence boundary:</b> All service APIs, GitLab state handoff, local paging-disabled observability, destructive GitLab recovery, and restore flows were exercised only in the repository-owned QEMU/mocks. TrueNAS, USB, UniFi, an external notification provider, x86_64, a second commissioned node, and the intended homelab host were not changed. Those are explicitly listed acceptance boundaries, not silently claimed as proven.</div>
+      <p><b>How contradictions were resolved for this assessment:</b> the <a href="../docs/implementation-working-agreement.md">working agreement</a> and linked accepted decisions take precedence over older sketches. In particular, <a href="../docs/resource-ownership.md">resource ownership</a> retains protected local state snapshots and places host runtime under Ansible; the <a href="../terraform/environments/post-bootstrap/README.md">older migration guide</a> says to delete local state, and parts of the PRD say “everything Terraform.” I used the newer, safer ownership contract. The <a href="../docs/observability.md">later observability note</a> acknowledges manual first-user dashboard setup; that narrows the earlier no-manual-steps language without excusing absent monitoring integrations.</p>
+      <p><b>What remains genuinely external:</b> public Cloudflare/ACME issuance, the selected TrueNAS mount and USB device, UniFi client rollout and rollback, a chosen paging provider, physical BMC/PXE/OS replacement, x86 installation, and actual-host capacity/soak. The source fixes above can precede these drills. No operator decision is needed to establish that the accepted implementations are incomplete.</p>
     </section>
 
     <section id="next">
-      <p class="eyebrow">Remaining review sequence</p><h2>No blocking implementation session remains</h2>
-      <div class="next"><div class="num">1</div><div><h3>Review the post-deploy trust handoff</h3><p>Choose how GitLab should pause and present the new OS fingerprint before the k3s join job. Keep the join token out of Git and Terraform state.</p></div></div>
-      <div class="next"><div class="num">2</div><div><h3>Schedule physical adoption acceptance</h3><p>Only with explicit authority, use a spare node on the MAAS-enabled lab VLAN to prove PXE commission/deploy and the confirmed k3s join.</p></div></div>
-      <div class="next"><div class="num">3</div><div><h3>Schedule other real-system acceptance deliberately</h3><p>Validate the chosen TrueNAS mount, optional USB repository, selected free pager, and network-by-network UniFi DNS rollout without using the NAS as compute.</p></div></div>
+      <p class="eyebrow">Recommended sequence</p><h2>Close operator journeys, then prove the home</h2>
+      <div class="note"><b>October 13 restart:</b> <a href="restart-review-2026-10-13.md">Start with the current checklist</a>. Source gates and generated-project tests pass; release fixture tests fail. Repair the runner's source-fingerprint and evidence wiring, start Docker, resume the existing guest, and run the complete acceptance journey before a final fresh-install proof. Authentik, interruption and source-binding scripts now exist but have no current combined pass. Physical Pi readiness remains separate. Backups are excluded from this experimental profile.</div>
+      <div class="note"><b>October 4 execution plan:</b> <a href="release-plan-2026-10-04.md">Read the blockers, owners and explicit completion gates</a>. Two bounded investigations were delegated to GPT-6 Luna. Use cheaper agents for focused repairs and test execution, with primary review at each gate. Preserve the existing guest; avoid full rebuilds for localized failures. The <a href="../docs/development-permissions.md">reusable development permission</a> is now installed in the user rules directory.</div>
+      <div class="next"><div class="num">1</div><div><h3>Prove GitLab owns routine management</h3><p>The source, Vault roles and trusted helper are implemented. Finish the fresh disposable run, then merge a core DNS and host-policy change from GitLab and verify a no-change rerun without the original controller.</p></div></div>
+      <div class="next"><div class="num">2</div><div><h3>Prove the useful web-service journey</h3><p>The web adapter and group-enforcing gateway are implemented and component-tested. Complete a service MR through deployment, trusted HTTPS, application health, deletion and rerun; retain the measured result.</p></div></div>
+      <div class="note"><b>Scope:</b> node expansion is deferred. Recovery, maintenance and monitoring findings remain visible as follow-ups. Native and bare-metal service adapters remain explicit product gaps; authenticated web-service implementation is not a claim that every PRD example works.</div>
     </section>
-    <footer>Generated from the local repository checkout. This report intentionally distinguishes design acceptance, source implementation, and live proof.</footer>
+
+    <section id="evidence">
+      <p class="eyebrow">Fresh checks and evidence limits</p><h2>What this review actually verified</h2>
+      <div class="grid three">
+        <article class="card"><div class="metric">Pass · Sep 27</div><h3>Focused source checks</h3><p>Source linting, generated-project validation, and access tests passed. This update does not treat them as fresh September 28 full-gate evidence.</p></article>
+        <article class="card"><div class="metric">Historical</div><h3>ARM64 integration</h3><p>August 26–27 documents record full bootstrap, rerun/resume, reboot, local Restic restore, GitLab loss/unfreeze, adoption MR, and bundle opening. These were read, not freshly repeated.</p></article>
+        <article class="card"><div class="metric">Inspected · Oct 4</div><h3>Guest progress and remaining failure</h3><p>September 28 doctors and administrator-preservation checks passed. The resumed run passed GitLab seeding, seven state handoffs and MAAS, then timed out downloading k3s. Nothing is running now. No combined MR journey has passed.</p></article>
+      </div>
+      <p>The baseline <code>097a0c26bdc3030a98648cff5017f48345814bc0</code> remained both local HEAD and remote <code>main</code> after the October 13 fetch. GitHub reported the previous push as August 29 at 13:45:26 UTC. Fresh source and generated-project gates passed; release fixture tests failed and integration prerequisites were blocked by Docker. The guest could not be reached. Earlier evidence cards below are historical, and broader F2–F8 findings were not fully reassessed. New GitHub/GitLab CI results are not implied by these local checks.</p>
+      <p>The current toolchain pins Go 1.26.1, Terraform 1.14.7 and Helm 3.19.1 in Hermit, alongside the existing Python/uv/Just pins. The generated GitLab project restores Hermit links and runs its own unit tests. Earlier September 5 evidence below remains historical; September implementation and component evidence is recorded separately.</p>
+      <ul>
+        <li><a href="evidence/2026-10-13-restart-validation.json">October 13 validation summary</a> and <a href="restart-review-2026-10-13.md">restart review</a> — current passes, failures, remote freshness and ordered next steps.</li>
+        <li><a href="evidence/2026-09-05-source-gates.txt">Fresh source-gate log</a> — successful exit, ANSI formatting removed.</li>
+        <li><a href="evidence/2026-09-05-integration-doctor.txt">Fresh integration prerequisite log</a> — Docker daemon unavailable.</li>
+        <li><a href="evidence/2026-09-05-review-metadata.json">Review metadata</a> — baseline, scope, commands, results, and limitations.</li>
+        <li><a href="../docs/gitlab-disaster-recovery.md">Historical GitLab evidence</a> — snapshot IDs, recovered commit, state count, failure/resume record.</li>
+        <li><a href="../docs/prd.md">Existing PRD status</a> and the previous report at baseline remain historical claims; this assessment supersedes the report’s completion verdict, not the accepted architecture.</li>
+      </ul>
+      <p><b>Limit:</b> this is a product-completeness and source assessment, not an exhaustive security audit, performance certification, upstream-version support review, or live-system inspection. External product behavior and current vendor support were not researched; findings rely on the repository’s own contracts and executable paths.</p>
+      <button class="print" type="button" id="print-report">Print or save as PDF</button>
+    </section>
+    <footer>13 October 2026 · Existing report updated in place · Source checks and read-only disposable-guest probe · Decisions accepted ≠ source implemented ≠ integration verified ≠ live proven.</footer>
   </main>
 </div>
+<script>
+  const buttons = [...document.querySelectorAll('[data-filter]')];
+  const rows = [...document.querySelectorAll('tr[data-status]')];
+  function filterCriteria(value) {
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.filter === value)));
+    rows.forEach(row => row.hidden = value !== 'all' && row.dataset.status !== value);
+    document.getElementById('criterion-count').textContent = `Showing ${rows.filter(row => !row.hidden).length} of ${rows.length} criteria`;
+  }
+  buttons.forEach(button => button.addEventListener('click', () => filterCriteria(button.dataset.filter)));
+  function revealFinding() {
+    const target = document.getElementById(location.hash.slice(1));
+    if (target && target.tagName === 'DETAILS') target.open = true;
+  }
+  window.addEventListener('hashchange', revealFinding);
+  revealFinding();
+  let printState;
+  window.addEventListener('beforeprint', () => {
+    printState = { open: [...document.querySelectorAll('details')].map(d => d.open), filter: buttons.find(b => b.getAttribute('aria-pressed') === 'true').dataset.filter };
+    document.querySelectorAll('details').forEach(d => d.open = true);
+    filterCriteria('all');
+  });
+  window.addEventListener('afterprint', () => {
+    if (!printState) return;
+    document.querySelectorAll('details').forEach((d, i) => d.open = printState.open[i]);
+    filterCriteria(printState.filter);
+  });
+  document.getElementById('print-report').addEventListener('click', () => window.print());
+</script>
 </body>
 </html>

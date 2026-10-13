@@ -9,6 +9,30 @@
   delay: "{{ gitlab_health_interval }}"
   until: gitlab_health.status == 200
 
+# Omnibus retries migrate an existing schema without retrying failed seeds.
+# A healthy HTTP endpoint therefore does not prove initial admin creation.
+# Only an empty installation may be seeded; never reset an existing account.
+- name: Complete interrupted GitLab administrator initialization
+  ansible.builtin.command:
+    argv:
+      - gitlab-rails
+      - runner
+      - >-
+        if User.exists?;
+          abort('Existing GitLab has no root administrator; deliberate recovery required') unless User.find_by(username: 'root')&.admin?;
+        else;
+          abort('Refusing to seed an existing GitLab installation') if Project.exists? || Group.exists?;
+          Rails.application.load_tasks;
+          Rake::Task['db:seed_fu'].invoke;
+          abort('GitLab administrator initialization did not complete') unless User.find_by(username: 'root')&.admin?;
+          puts 'BOOTSTRAP_ADMIN_SEEDED';
+        end
+  environment:
+    GITLAB_ROOT_PASSWORD: "{{ gitlab_admin_password }}"
+  register: gitlab_admin_initialization
+  changed_when: "'BOOTSTRAP_ADMIN_SEEDED' in gitlab_admin_initialization.stdout"
+  no_log: true
+
 # The bootstrap PAT is controller-only and short-lived. Terraform uses it to
 # create durable groups/projects from their first creation; Ansible does not
 # create or import those API objects.
@@ -60,7 +84,8 @@
       - gitlab-rails
       - runner
       - >-
-        user = User.find(1);
+        user = User.find_by!(username: 'root');
+        abort('Bootstrap user is not an administrator') unless user.admin?;
         user.personal_access_tokens.where(
           name: 'bootstrap-terraform-token'
         ).destroy_all;

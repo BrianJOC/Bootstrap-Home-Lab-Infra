@@ -1,0 +1,12 @@
+name: whoami
+hostname: whoami.home.example.com
+target:
+  cluster: bootstrap
+  helm_chart: charts/whoami
+  chart_version: 1.0.0
+  service: whoami
+  port: 80
+  node_port: 31080
+authentik: true
+allowed_groups: [adults]
+health_check: http:/health

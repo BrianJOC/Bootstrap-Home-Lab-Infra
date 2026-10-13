@@ -1,0 +1,72 @@
+---
+- name: Store protected cluster identities for scheduled health checks
+  ansible.builtin.copy:
+    content: "{{ item.value }}"
+    dest: "/etc/bootstrap-home-infra/gitops-kubeconfig-{{ item.key }}"
+    owner: root
+    group: root
+    mode: "0600"
+  loop: "{{ gitops_kubeconfigs | default({}) | dict2items }}"
+  no_log: true
+
+- name: Install reviewed private service routes
+  ansible.builtin.template:
+    src: services.nginx.j2
+    dest: /etc/nginx/conf.d/bootstrap-gitops-services.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload gitops nginx
+
+- name: Create GitOps service monitor directory
+  ansible.builtin.file:
+    path: /var/lib/bootstrap-home-infra/gitops-services
+    state: directory
+    mode: "0755"
+
+- name: Install service health-check intent
+  ansible.builtin.copy:
+    content: "{{ gitops_services | to_nice_json }}\n"
+    dest: /etc/bootstrap-home-infra/gitops-services.json
+    mode: "0600"
+
+- name: Install functional service monitor
+  ansible.builtin.template:
+    src: service-health.py.j2
+    dest: /usr/local/sbin/bootstrap-gitops-health
+    mode: "0700"
+
+- name: Install service health-check systemd units
+  ansible.builtin.copy:
+    content: "{{ item.content }}"
+    dest: "/etc/systemd/system/{{ item.name }}"
+    mode: "0644"
+  loop:
+    - name: bootstrap-gitops-health.service
+      content: |
+        [Unit]
+        Description=GitOps service HTTPS and authentication checks
+        After=network-online.target nginx.service
+        [Service]
+        Type=oneshot
+        ExecStart=/usr/local/sbin/bootstrap-gitops-health
+        UMask=0077
+    - name: bootstrap-gitops-health.timer
+      content: |
+        [Unit]
+        Description=Check GitOps services every minute
+        [Timer]
+        OnBootSec=90s
+        OnUnitActiveSec=60s
+        [Install]
+        WantedBy=timers.target
+
+- name: Enable functional service checks
+  ansible.builtin.systemd:
+    name: bootstrap-gitops-health.timer
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply validated ingress configuration
+  ansible.builtin.meta: flush_handlers

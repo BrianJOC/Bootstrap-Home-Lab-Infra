@@ -3,6 +3,14 @@
   hosts: all
   become: true
   tasks:
+    - name: Verify the initial administrator exists independently of HTTP health
+      ansible.builtin.command:
+        argv:
+          - gitlab-rails
+          - runner
+          - "abort('Missing root administrator') unless User.find_by(username: 'root')&.admin?"
+      changed_when: false
+
     - name: Check gitlab-runsvdir service is active
       ansible.builtin.systemd:
         name: gitlab-runsvdir

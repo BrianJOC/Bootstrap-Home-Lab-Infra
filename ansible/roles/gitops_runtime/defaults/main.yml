@@ -1,0 +1,4 @@
+---
+gitops_services: []
+gitops_clusters: {}
+cert_dir: /opt/certs

@@ -17,6 +17,11 @@
     dest: "/tmp/{{ k3s_release_filename }}"
     checksum: "sha256:https://github.com/k3s-io/k3s/releases/download/{{ k3s_version }}/sha256sum-{{ k3s_release_arch }}.txt"
     mode: "0644"
+    timeout: 30
+  register: k3s_download
+  retries: 5
+  delay: 10
+  until: k3s_download is succeeded
 
 - name: Install verified k3s binary
   ansible.builtin.copy:
@@ -86,6 +91,7 @@
     ansible_connection: local
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   become: false
+  when: k3s_fetch_controller_config | default(true) | bool
 
 - name: Fetch protected kubeconfig to the controller
   ansible.builtin.fetch:
@@ -93,6 +99,7 @@
     dest: "{{ k3s_controller_kubeconfig_dir }}/{{ k3s_cluster_name }}.yaml"
     flat: true
   no_log: true
+  when: k3s_fetch_controller_config | default(true) | bool
 
 - name: Restrict controller kubeconfig permissions
   ansible.builtin.file:
@@ -104,3 +111,4 @@
     ansible_connection: local
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   become: false
+  when: k3s_fetch_controller_config | default(true) | bool

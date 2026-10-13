@@ -1,0 +1,18 @@
+# Scoped to the trusted bootstrap-home-infra checkout. No global shell/Python allow.
+# User-authorized permission audit, 2026-09-27. See docs/development-permissions.md.
+prefix_rule(
+    pattern = ["/Users/brian/src/bootstrap-home-infra/bin/python", "/Users/brian/src/bootstrap-home-infra/scripts/dev-authorized.py"],
+    decision = "allow",
+    justification = "Repository checks, dependency setup, and fixed disposable QEMU guest operations; helper validates scope and handles logs.",
+    match = [
+        "/Users/brian/src/bootstrap-home-infra/bin/python /Users/brian/src/bootstrap-home-infra/scripts/dev-authorized.py task lint-all --log",
+        "/Users/brian/src/bootstrap-home-infra/bin/python /Users/brian/src/bootstrap-home-infra/scripts/dev-authorized.py put internal/gitops/project.go",
+        "/Users/brian/src/bootstrap-home-infra/bin/python /Users/brian/src/bootstrap-home-infra/scripts/dev-authorized.py guest hostname",
+    ],
+    not_match = [
+        "/Users/brian/src/bootstrap-home-infra/bin/python -c print(1)",
+        "python3 /Users/brian/src/bootstrap-home-infra/scripts/dev-authorized.py task doctor",
+        "ssh -p 2222 ansible@real.example hostname",
+        "git push origin main",
+    ],
+)

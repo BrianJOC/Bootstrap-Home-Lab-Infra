@@ -1,11 +1,221 @@
 package terraform
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
+
+type runnerSink struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (s *runnerSink) StageStarted(string)                     {}
+func (s *runnerSink) StageComplete(string)                    {}
+func (s *runnerSink) StageFailed(string, string, string, int) {}
+func (s *runnerSink) Prompt(string, bool) (string, error)     { return "", nil }
+func (s *runnerSink) Confirm(string) (bool, error)            { return true, nil }
+func (s *runnerSink) ShowWarningBox([]string)                 {}
+func (s *runnerSink) Log(_ string, _ string, message string, _ map[string]string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.messages = append(s.messages, message)
+}
+
+func (s *runnerSink) contains(message string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return strings.Contains(strings.Join(s.messages, "\n"), message)
+}
+
+func installTerraformHelper(t *testing.T, scenario string) {
+	t.Helper()
+	helper := filepath.Join(t.TempDir(), "terraform")
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nexec " + strconv.Quote(testBinary) + " -test.run=^TestTerraformRunnerHelperProcess$ -- \"$@\"\n"
+	if err := os.WriteFile(helper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", filepath.Dir(helper)+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("GO_WANT_TERRAFORM_HELPER", "1")
+	t.Setenv("TERRAFORM_HELPER_SCENARIO", scenario)
+}
+
+func TestTerraformRunnerHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_TERRAFORM_HELPER") != "1" {
+		return
+	}
+
+	switch os.Getenv("TERRAFORM_HELPER_SCENARIO") {
+	case "long-line":
+		fmt.Fprintln(os.Stdout, strings.Repeat("a", 512*1024))
+		fmt.Fprintln(os.Stdout, "after-long-line")
+	case "oversized-line":
+		fmt.Fprintln(os.Stdout, strings.Repeat("b", terraformLogLineLimit+32*1024))
+		fmt.Fprintln(os.Stdout, "after-oversized-line")
+	case "failure":
+		fmt.Fprintln(os.Stderr, "intentional terraform failure")
+		os.Exit(17)
+	case "output-init":
+		separator := -1
+		for index, argument := range os.Args {
+			if argument == "--" {
+				separator = index
+				break
+			}
+		}
+		if separator < 0 {
+			fmt.Fprintln(os.Stderr, "Terraform arguments are missing")
+			os.Exit(2)
+		}
+		arguments := strings.Join(os.Args[separator+1:], " ")
+		log, err := os.OpenFile(os.Getenv("TERRAFORM_HELPER_LOG"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		fmt.Fprintf(log, "%s\t%s\n", arguments, os.Getenv("TF_DATA_DIR"))
+		_ = log.Close()
+		if strings.Contains(arguments, " -json ") {
+			fmt.Fprintln(os.Stdout, `{"id":"project-123"}`)
+		} else if strings.Contains(arguments, " output ") {
+			fmt.Fprintln(os.Stdout, "project-123")
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "unknown Terraform helper scenario")
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
+
+func TestOutputInitializesCurrentLockBeforeReadingProtectedLocalState(t *testing.T) {
+	installTerraformHelper(t, "output-init")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	commandLog := filepath.Join(t.TempDir(), "terraform-commands.log")
+	t.Setenv("TERRAFORM_HELPER_LOG", commandLog)
+	module := t.TempDir()
+	runner := &Runner{sink: &runnerSink{}}
+
+	got, err := runner.Output(module, "bootstrap-gitlab", "iac_project_id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "project-123" {
+		t.Fatalf("Output() = %q, want project-123", got)
+	}
+
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(commands)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], " init -backend=false -reconfigure") || !strings.Contains(lines[1], " output -state=") {
+		t.Fatalf("expected local lock initialization before protected-state output, commands were %q", commands)
+	}
+	if strings.Contains(lines[0], "backend-config") || strings.Contains(lines[1], "-state=remote") || strings.Contains(lines[1], "-state="+filepath.Join(home, ".local", "share", "bootstrap-home-infra", "terraform-state", ".terraform", "bootstrap-gitlab")) {
+		t.Fatalf("output initialization must remain isolated from the authoritative backend: %q", commands)
+	}
+	cache := strings.SplitN(lines[0], "\t", 2)[1]
+	if !strings.HasSuffix(cache, "bootstrap-gitlab-output") || strings.SplitN(lines[1], "\t", 2)[1] != cache {
+		t.Fatalf("output must use one isolated provider cache, commands were %q", commands)
+	}
+}
+
+func TestOutputJSONInitializesCurrentLockBeforeReadingProtectedLocalState(t *testing.T) {
+	installTerraformHelper(t, "output-init")
+	t.Setenv("HOME", t.TempDir())
+	commandLog := filepath.Join(t.TempDir(), "terraform-commands.log")
+	t.Setenv("TERRAFORM_HELPER_LOG", commandLog)
+	module := t.TempDir()
+	runner := &Runner{sink: &runnerSink{}}
+	var got struct {
+		ID string `json:"id"`
+	}
+
+	if err := runner.OutputJSON(module, "bootstrap-gitlab", "iac_project", &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "project-123" {
+		t.Fatalf("OutputJSON() id = %q, want project-123", got.ID)
+	}
+	commands, err := os.ReadFile(commandLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(commands)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], " init -backend=false -reconfigure") || !strings.Contains(lines[1], " output -state=") {
+		t.Fatalf("expected local lock initialization before protected-state output, commands were %q", commands)
+	}
+	cache := strings.SplitN(lines[0], "\t", 2)[1]
+	if !strings.HasSuffix(cache, "bootstrap-gitlab-output") || strings.SplitN(lines[1], "\t", 2)[1] != cache {
+		t.Fatalf("output must use one isolated provider cache, commands were %q", commands)
+	}
+}
+
+func TestRunnerRunDrainsLongTerraformPlanLine(t *testing.T) {
+	installTerraformHelper(t, "long-line")
+	sink := &runnerSink{}
+	runner := &Runner{sink: sink}
+	if err := runner.run(t.TempDir(), os.Environ(), "plan"); err != nil {
+		t.Fatalf("run returned an error after draining a long plan line: %v", err)
+	}
+	if !sink.contains("after-long-line") {
+		t.Fatal("runner did not drain output after a long Terraform plan line")
+	}
+}
+
+func TestRunnerRunDrainsOversizedLineWithoutUnboundedLogging(t *testing.T) {
+	installTerraformHelper(t, "oversized-line")
+	sink := &runnerSink{}
+	runner := &Runner{sink: sink}
+	if err := runner.run(t.TempDir(), os.Environ(), "plan"); err != nil {
+		t.Fatalf("run returned an error after draining an oversized plan line: %v", err)
+	}
+	if !sink.contains("truncated after") || !sink.contains("after-oversized-line") {
+		t.Fatalf("oversized output was not truncated and fully drained: %q", sink.messages)
+	}
+}
+
+func TestRunnerRunPropagatesTerraformExitFailure(t *testing.T) {
+	installTerraformHelper(t, "failure")
+	runner := &Runner{sink: &runnerSink{}}
+	err := runner.run(t.TempDir(), os.Environ(), "plan")
+	if err == nil {
+		t.Fatal("expected Terraform helper failure")
+	}
+	if !strings.Contains(err.Error(), "terraform plan failed") || !strings.Contains(err.Error(), "exit status 17") {
+		t.Fatalf("unexpected Terraform failure: %v", err)
+	}
+}
+
+func TestStreamTerraformOutputPropagatesReadError(t *testing.T) {
+	want := errors.New("broken output pipe")
+	err := streamTerraformOutput(errorReader{err: want}, &runnerSink{}, "info")
+	if !errors.Is(err, want) {
+		t.Fatalf("stream error = %v, want %v", err, want)
+	}
+}
+
+type errorReader struct {
+	err error
+}
+
+func (r errorReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+var _ io.Reader = errorReader{}
 
 func TestDecodeStateMetadata(t *testing.T) {
 	got, err := decodeStateMetadata([]byte(`{"lineage":"abc","serial":7}`))

@@ -44,7 +44,13 @@ resource "authentik_provider_oauth2" "service" {
   authorization_flow = data.authentik_flow.default_authorization.id
 
   # Scopes: openid, email, profile — minimum required by most services
-  property_mappings = data.authentik_scope_mapping.standard.ids
+  property_mappings = concat(data.authentik_scope_mapping.standard.ids, [authentik_scope_mapping.groups.id])
+}
+
+resource "authentik_scope_mapping" "groups" {
+  name       = "bootstrap-groups"
+  scope_name = "groups"
+  expression = "return {'groups': [group.name for group in request.user.ak_groups.all()]}"
 }
 
 # Standard OpenID scope mappings
@@ -61,10 +67,11 @@ data "authentik_scope_mapping" "standard" {
 resource "authentik_application" "service" {
   for_each = { for s in var.services : s.name => s }
 
-  name              = each.value.name
-  slug              = each.value.name
-  protocol_provider = authentik_provider_oauth2.service[each.key].id
-  meta_launch_url   = "https://${each.value.name}.${var.internal_domain}"
+  name               = each.value.name
+  slug               = each.value.name
+  protocol_provider  = authentik_provider_oauth2.service[each.key].id
+  meta_launch_url    = regex("^https://[^/]+", each.value.redirect_uri)
+  policy_engine_mode = "any"
 }
 
 # ── Policy Bindings: restrict each app to its declared groups ─────────────────

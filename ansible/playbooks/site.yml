@@ -35,3 +35,6 @@
 
 - name: Stage 9 — Target-host lifecycle
   import_playbook: stage-9-lifecycle.yml
+
+- name: Stage 10 — GitLab management handoff
+  import_playbook: stage-10-gitops.yml

@@ -1,0 +1,38 @@
+{
+  "review_date": "2026-09-05",
+  "baseline_commit": "097a0c26bdc3030a98648cff5017f48345814bc0",
+  "branch": "main",
+  "initial_tracked_worktree": "clean",
+  "scope": "Local product-completeness and source review; no live target or remote repository inspection",
+  "fresh_checks": [
+    {
+      "command": "scripts/dev-doctor.sh source",
+      "exit_code": 0,
+      "result": "prerequisites available; Go/Terraform resolve from Homebrew"
+    },
+    {
+      "command": "bin/just lint-all",
+      "exit_code": 0,
+      "log": "2026-09-05-source-gates.txt"
+    },
+    {
+      "command": "bin/just doctor-integration",
+      "exit_code": 1,
+      "log": "2026-09-05-integration-doctor.txt",
+      "result": "Docker daemon unavailable"
+    }
+  ],
+  "tooling_limits": "Hermit declares Just, Python, uv only. Source gates invoke existing PATH Go/Terraform. No global Python/uv setup used.",
+  "historical_evidence": "August 26-27 narrative records in decision documents; not freshly rerun or independently corroborated against retained raw VM logs.",
+  "not_performed": [
+    "fresh VM/container integration",
+    "real host or NAS/USB/network mutation",
+    "external credentials use",
+    "remote CI inspection",
+    "upstream support/security review"
+  ],
+  "changes": "Report and redacted evidence only; no product implementation changes.",
+  "criteria_count": 22,
+  "finding_count": 9,
+  "prior_report": "Same report path at baseline commit, last revalidated 2026-08-27; current report supersedes its readiness verdict."
+}

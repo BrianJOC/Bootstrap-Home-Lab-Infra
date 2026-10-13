@@ -1,0 +1,49 @@
+---
+- name: Create protected GitOps host configuration directory
+  ansible.builtin.file:
+    path: /etc/bootstrap-home-infra
+    state: directory
+    mode: "0700"
+
+- name: Install fixed host identity for privileged GitOps authorization
+  ansible.builtin.copy:
+    content: "{{ gitops_host_identity | from_json | to_nice_json }}\n"
+    dest: /etc/bootstrap-home-infra/gitops-host.json
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install trusted privileged GitOps executor
+  ansible.builtin.copy:
+    src: "{{ gitops_binary_path }}"
+    dest: /usr/local/sbin/bootstrap-gitops-host-binary
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install protected-branch host entry point
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      set -Eeuo pipefail
+      test "$#" -eq 1
+      exec /usr/local/sbin/bootstrap-gitops-host-binary host-runtime "$1"
+    dest: /usr/local/sbin/bootstrap-gitops-host
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Permit only the independently authorized host entry point
+  ansible.builtin.copy:
+    content: "gitlab-runner ALL=(root) NOPASSWD: /usr/local/sbin/bootstrap-gitops-host *\n"
+    dest: /etc/sudoers.d/bootstrap-gitops-host
+    owner: root
+    group: root
+    mode: "0440"
+    validate: /usr/sbin/visudo -cf %s
+
+- name: Record completed management handoff
+  ansible.builtin.copy:
+    content: "gitops-runtime=1\n"
+    dest: /var/lib/bootstrap-home-infra/gitops-runtime-configured
+    mode: "0600"

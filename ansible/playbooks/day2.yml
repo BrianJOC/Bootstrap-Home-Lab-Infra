@@ -1,0 +1,75 @@
+---
+# Reviewed GitLab source owns host/runtime configuration after handoff. No
+# bootstrap API token creation, Vault init, Terraform import, or state migration.
+- name: Reconcile existing platform runtime from GitLab
+  hosts: all
+  become: true
+  gather_facts: true
+  pre_tasks:
+    - name: Read existing deliberate retention approval
+      ansible.builtin.stat:
+        path: /etc/bootstrap-home-infra/backup/retention-approved
+      register: gitops_retention_approval
+
+    - name: Preserve retention approval unless reviewed source explicitly changes it
+      ansible.builtin.set_fact:
+        backup_retention_approved: "{{ gitops_retention_approval.stat.exists }}"
+      when: backup_retention_approved is not defined
+  tasks:
+    - name: Reconcile DNS container and storage
+      ansible.builtin.include_role:
+        name: technitium_dns
+        tasks_from: install.yml
+
+    - name: Reconcile Vault host runtime
+      ansible.builtin.include_role:
+        name: vault_install
+      vars:
+        vault_bootstrap_init_enabled: false
+
+    - name: Reconcile shared PostgreSQL runtime
+      ansible.builtin.include_role:
+        name: postgresql_install
+
+    - name: Reconcile Authentik runtime without recreating API identities
+      ansible.builtin.include_role:
+        name: authentik_install
+        tasks_from: install.yml
+
+    - name: Reconcile GitLab runtime without rotating bootstrap credentials
+      ansible.builtin.include_role:
+        name: gitlab_install
+        tasks_from: reconcile.yml
+
+    - name: Reconcile certificate renewal and private ingress
+      ansible.builtin.include_role:
+        name: tls_lego
+
+    - name: Reconcile existing MAAS runtime
+      ansible.builtin.include_role:
+        name: maas_install
+        tasks_from: reconcile.yml
+
+    - name: Reconcile the installed k3s control plane
+      ansible.builtin.include_role:
+        name: k3s_install
+      vars:
+        k3s_fetch_controller_config: false
+      when: k3s_enabled | default(false) | bool
+
+    - name: Reconcile backup policy
+      ansible.builtin.include_role:
+        name: backup_install
+
+    - name: Reconcile maintenance policy
+      ansible.builtin.include_role:
+        name: maintenance_install
+
+    - name: Reconcile local monitoring
+      ansible.builtin.include_role:
+        name: observability_install
+
+    - name: Reconcile service routes and health checks
+      ansible.builtin.include_role:
+        name: gitops_runtime
+        tasks_from: services.yml

@@ -3,6 +3,12 @@ variable "gitlab_url" {
   description = "GitLab base URL used in generated backend examples."
 }
 
+variable "iac_source_dir" {
+  type        = string
+  default     = ""
+  description = "Prepared non-secret project seed; the checked-out project is used after handoff."
+}
+
 variable "vault_address" {
   type        = string
   description = "Vault server address — stored as project CI/CD variable"
