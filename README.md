@@ -15,6 +15,7 @@ A multi-stage bootstrap system for a self-hosted homelab. Targets a single Ubunt
 | 5 | PostgreSQL | Shared DB instance (GitLab, Authentik, MAAS) |
 | 6 | GitLab + Runner | GitOps platform; Terraform state backend |
 | 7 | MAAS | Bare-metal server provisioning |
+| 8 | k3s | Kubernetes installation via Ansible |
 
 No services are publicly exposed. TLS is issued via Cloudflare DNS-01 — no inbound port required.
 
@@ -22,7 +23,7 @@ No services are publicly exposed. TLS is issued via Cloudflare DNS-01 — no inb
 
 - Ubuntu target server with SSH access and passwordless sudo
 - Cloudflare account managing your domain (for DNS-01 TLS)
-- Go 1.22+ (to build the bootstrap binary)
+- Go 1.26.1+ (to build the bootstrap binary)
 - Ansible + Molecule (for role testing)
 - Terraform (for post-bootstrap GitOps wiring)
 
@@ -31,7 +32,7 @@ No services are publicly exposed. TLS is issued via Cloudflare DNS-01 — no inb
 ### First run (interactive wizard)
 
 ```bash
-just build
+go build -o bin/bootstrap ./cmd/bootstrap
 ./bin/bootstrap
 ```
 
@@ -40,7 +41,7 @@ The TUI wizard collects all required configuration and writes `config.yaml` and 
 ### Re-run with existing config
 
 ```bash
-just run
+./bin/bootstrap
 ```
 
 The TUI shows a preamble with your current config and asks whether to proceed or re-enter the wizard.
@@ -71,7 +72,7 @@ Copy `config.yaml.example` to `config.yaml` and fill in your values. Secrets go 
 | `ssh_key_path` | Path to SSH private key |
 | `internal_domain` | Private domain (e.g. `home.lab`) |
 | `cloudflare_zone_id` | Cloudflare Zone ID for your domain |
-| `bootstrap_server_ip` | IP of this machine (used in Ansible inventory) |
+| `bootstrap_server_ip` | IP of the target bootstrap server (service binding and database access) |
 | `lab_vlan_subnet` | CIDR for the lab network (e.g. `10.0.0.0/24`) |
 | `admin_email` | Email for ACME registration and Authentik admin |
 | `vault_init_output_path` | Where to write Vault unseal keys (default: `./vault-init.json`) |
@@ -96,40 +97,46 @@ data_disk_force_format: false
 
 ## Development
 
+Run these commands from the repository root:
+
 ```bash
-just build              # build binary to bin/bootstrap
-just test-go            # run Go unit tests
-just lint-all           # go vet + terraform validate + ansible-lint
-just tf-validate        # validate all Terraform modules
-just syntax-check-all   # ansible-lint all roles
+go build -o bin/bootstrap ./cmd/bootstrap
+go test ./...
+go vet ./...
+just --list            # tasks available in the current Justfile
 ```
 
-### Testing against a QEMU VM
+### Test infrastructure
 
 ```bash
 just generate-test-keys          # once per environment
 just build-base-image            # build Ubuntu qcow2 image via Packer
-just vm-up                       # start VM (SSH on localhost:2222)
-just write-test-config           # write test/config.yaml
-just mocks-up-vm                 # start Pebble ACME + Cloudflare mock on VM
-just test-stage dns              # run a single stage against the VM
-just test-bootstrap              # run full end-to-end
-just vm-down                     # stop VM
+just mocks-up                    # start local Pebble + Cloudflare mocks
+bash test/write-test-config.sh   # write test/config.yaml and test/.env
 ```
 
-With a secondary disk attached (SSD hat tests):
+Start and configure the QEMU VM separately; the current Justfile has no VM
+lifecycle recipes. Once the target and mock endpoints are reachable, pass the
+test file paths explicitly:
 
 ```bash
-just vm-up-ssd                   # start VM with /dev/vdb attached
-just test-stage-ssd storage      # run storage stage with SSD config
-just test-bootstrap-ssd          # full end-to-end with SSD
+ACME_SERVER_URL=https://localhost:14000/dir \
+CLOUDFLARE_API_BASE_URL=http://localhost:8080 \
+./bin/bootstrap --headless --config test/config.yaml --env test/.env --stage dns
 ```
 
-### Molecule (per-role idempotency testing)
+The mock URLs must be reachable from the machine using them; adjust hostnames
+and port forwarding for your VM setup. The `test-stage` and `test-bootstrap`
+recipes use the default `./config.yaml` and `./.env`, not the files under `test/`.
+For a configured secondary disk, the stage name is `storage-setup`.
+
+### Molecule (per-role testing)
+
+Use the role directory name:
 
 ```bash
-just test-role dns               # full molecule test for a role
-just test-role-idempotent vault  # converge twice, verify zero changed tasks
+just test-role technitium_dns
+just test-role vault_install
 ```
 
 ## Directory structure
@@ -155,10 +162,11 @@ docs/superpowers/   Design specs and implementation plans
 
 ## Post-bootstrap
 
-After Stage 6 (GitLab) is running, migrate Terraform state to the GitLab HTTP backend:
+After Stage 6 (GitLab) is running, configure the GitLab HTTP backend and export
+its credentials before migrating Terraform state:
 
 ```bash
-just migrate-tf-state
+terraform -chdir=terraform/environments/bootstrap init -migrate-state
 ```
 
 See `terraform/environments/post-bootstrap/README.md` for details.
@@ -168,3 +176,8 @@ See `terraform/environments/post-bootstrap/README.md` for details.
 - `vault-init.json` contains Vault unseal keys and root token — store it securely, it is gitignored
 - The Cloudflare API token is the only externally-sensitive credential required during bootstrap
 - All internal services communicate over the private network; nothing is exposed publicly
+
+## Implementation notes
+
+See [current implementation notes](docs/notes.md) for the October 14, 2026
+bootstrap fixes, configuration behavior, and remaining verification work.

@@ -3,7 +3,8 @@
 > Produced by: workflow-architect
 > Source of truth: `docs/prd.md`
 > Last updated: 2026-03-19
-> Status: Ready for spec-writer
+> Status: Design workflow; not a record of verified runtime behavior
+> Implementation notes updated: 2026-10-14 — see [notes.md](notes.md)
 
 ---
 
