@@ -56,38 +56,59 @@ func FromWizardResult(r WizardResult) (*RunConfig, error) {
 	}
 
 	targetHost, err := mustGet("target_host")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	sshUser, err := mustGet("ssh_user")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	sshKeyPath, err := mustGet("ssh_key_path")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	internalDomain, err := mustGet("internal_domain")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	cfZoneID, err := mustGet("cloudflare_zone_id")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	bootstrapIP, err := mustGet("bootstrap_server_ip")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	labVLANSubnet, err := mustGet("lab_vlan_subnet")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	adminEmail, err := mustGet("admin_email")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	cfToken, err := mustSecret("CF_DNS_API_TOKEN")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	adminPass, err := mustSecret("BOOTSTRAP_ADMIN_PASSWORD")
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
-		TargetHost:        targetHost,
-		SSHUser:           sshUser,
-		SSHKeyPath:        sshKeyPath,
-		InternalDomain:    internalDomain,
-		CloudflareZoneID:  cfZoneID,
-		BootstrapServerIP: bootstrapIP,
-		LabVLANSubnet:     labVLANSubnet,
-		AdminEmail:        adminEmail,
-		VaultShares:       5,
-		VaultThreshold:    3,
+		TargetHost:          targetHost,
+		SSHUser:             sshUser,
+		SSHKeyPath:          sshKeyPath,
+		InternalDomain:      internalDomain,
+		CloudflareZoneID:    cfZoneID,
+		BootstrapServerIP:   bootstrapIP,
+		LabVLANSubnet:       labVLANSubnet,
+		AdminEmail:          adminEmail,
+		VaultShares:         5,
+		VaultThreshold:      3,
+		VaultInitOutputPath: "./vault-init.json",
 	}
 	if v := r.Values["lab_vlan_id"]; v != "" {
 		id, err := strconv.Atoi(strings.TrimSpace(v))

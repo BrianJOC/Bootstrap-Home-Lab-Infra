@@ -22,6 +22,7 @@ func WriteConfigYAML(path string, cfg *Config) error {
 		fmt.Sprintf("admin_email: %q", cfg.AdminEmail),
 		fmt.Sprintf("vault_shares: %d", cfg.VaultShares),
 		fmt.Sprintf("vault_threshold: %d", cfg.VaultThreshold),
+		fmt.Sprintf("vault_init_output_path: %q", cfg.VaultInitOutputPath),
 	}
 	if cfg.DataDisk != "" {
 		lines = append(lines, fmt.Sprintf("data_disk: %q", cfg.DataDisk))

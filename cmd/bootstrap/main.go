@@ -23,6 +23,7 @@ var (
 	flagTarget   string
 	flagStage    string
 	flagHeadless bool
+	flagWizard   bool
 	flagConfig   string
 	flagEnv      string
 )
@@ -41,6 +42,7 @@ func init() {
 	rootCmd.Flags().StringVar(&flagTarget, "target", "", "Override target host from config")
 	rootCmd.Flags().StringVar(&flagStage, "stage", "", "Run only this stage by name")
 	rootCmd.Flags().BoolVar(&flagHeadless, "headless", false, "No TUI, log output only")
+	rootCmd.Flags().BoolVar(&flagWizard, "wizard", false, "Run setup wizard (pre-fills from existing config if present)")
 	rootCmd.Flags().StringVar(&flagConfig, "config", "./config.yaml", "Path to config.yaml")
 	rootCmd.Flags().StringVar(&flagEnv, "env", "./.env", "Path to .env file")
 }
@@ -113,7 +115,18 @@ func runBootstrap(cmd *cobra.Command, args []string) error {
 	if flagHeadless {
 		return runHeadless(rc, rctx, allStages, logger, logPath, flagStage)
 	}
-	return runTUI(rc, rctx, allStages, flagStage, logPath)
+	return runTUI(rc, rctx, allStages, flagStage, logPath, flagWizard)
+}
+
+// selectInitialScreen determines the initial TUI mode without starting the TUI.
+func selectInitialScreen(rc *config.RunConfig, wizardFlag bool) tui.InitialMode {
+	if wizardFlag {
+		return tui.InitialModeWizard
+	}
+	if config.Validate(rc) != nil {
+		return tui.InitialModeWizard
+	}
+	return tui.InitialModePreamble
 }
 
 // buildStages returns all bootstrap stages in dependency order.
@@ -146,7 +159,7 @@ func runHeadless(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []
 }
 
 // runTUI runs the bootstrap with the Bubbletea TUI.
-func runTUI(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage.Stage, targetStage, logPath string) error {
+func runTUI(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage.Stage, targetStage, logPath string, wizardFlag bool) error {
 	// Build initial stage statuses.
 	statuses := make([]tui.StageStatus, len(allStages))
 	for i, s := range allStages {
@@ -156,32 +169,63 @@ func runTUI(rc *config.RunConfig, rctx *runcontext.RunContext, allStages []stage
 		}
 	}
 
-	model := tui.New(statuses, logPath)
-	program := tea.NewProgram(model, tea.WithAltScreen())
-
+	resultCh := make(chan config.WizardResult, 1)
+	mode := selectInitialScreen(rc, wizardFlag)
+	appModel := tui.NewApp(mode, rc, resultCh, statuses, logPath)
+	program := tea.NewProgram(appModel, tea.WithAltScreen())
 	tuiSink := tui.NewTUISink(program)
-	runner := stage.NewRunner(allStages, tuiSink, logPath)
+	runnerErrCh := make(chan error, 1)
 
-	// Run the stages in a goroutine so the TUI can update.
-	runErrChan := make(chan error, 1)
+	// Wait for wizard completion, persist any new configuration, then launch
+	// the stage runner while the TUI displays progress.
 	go func() {
-		ctx := context.Background()
-		var err error
-		if targetStage != "" {
-			err = runner.RunStage(ctx, rc.Config, rc.Secrets, rctx, targetStage)
-		} else {
-			err = runner.Run(ctx, rc.Config, rc.Secrets, rctx)
+		result := <-resultCh
+		activeRC := rc
+
+		if !result.Noop {
+			var err error
+			activeRC, err = config.FromWizardResult(result)
+			if err != nil {
+				program.Send(tui.FatalMsg{Err: err})
+				runnerErrCh <- err
+				return
+			}
+			if err := config.WriteConfigYAML(rctx.ConfigPath, activeRC.Config); err != nil {
+				program.Send(tui.FatalMsg{Err: err})
+				runnerErrCh <- err
+				return
+			}
+			if err := config.WriteEnvFile(rctx.EnvPath, activeRC.Secrets); err != nil {
+				program.Send(tui.FatalMsg{Err: err})
+				runnerErrCh <- err
+				return
+			}
 		}
-		runErrChan <- err
-		tuiSink.Quit()
+
+		program.Send(tui.StartStagesMsg{RC: activeRC})
+
+		go func() {
+			ctx := context.Background()
+			runner := stage.NewRunner(allStages, tuiSink, logPath)
+			var err error
+			if targetStage != "" {
+				err = runner.RunStage(ctx, activeRC.Config, activeRC.Secrets, rctx, targetStage)
+			} else {
+				err = runner.Run(ctx, activeRC.Config, activeRC.Secrets, rctx)
+			}
+			runnerErrCh <- err
+			tuiSink.Quit()
+		}()
 	}()
 
-	// Run the TUI (blocks until quit).
-	finalModel, err := program.Run()
-	if err != nil {
+	if _, err := program.Run(); err != nil {
 		return fmt.Errorf("TUI error: %w", err)
 	}
-	_ = finalModel
 
-	return <-runErrChan
+	select {
+	case err := <-runnerErrCh:
+		return err
+	default:
+		return nil
+	}
 }

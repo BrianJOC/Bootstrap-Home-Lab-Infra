@@ -11,13 +11,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-<<<<<<< HEAD
 // internalDomainRE is a strict allowlist for internal_domain values.
 // Only lowercase labels with hyphens are allowed; no shell metacharacters.
 var internalDomainRE = regexp.MustCompile(`^[a-z0-9][a-z0-9\-]*(\.[a-z0-9][a-z0-9\-]*)+$`)
-=======
+
+// validDataDiskRE limits data disks to supported Linux block device names.
 var validDataDiskRE = regexp.MustCompile(`^/dev/(sd[a-z]+|nvme[0-9]+n[0-9]+|mmcblk[0-9]+|vd[a-z]+)$`)
->>>>>>> 040e51f (fix(config): improve validation ordering and move regex to package level)
 
 // Config holds all non-sensitive structural configuration from config.yaml.
 // No secrets. Safe to log field names (not values).
@@ -31,11 +30,11 @@ type Config struct {
 	LabVLANSubnet     string `yaml:"lab_vlan_subnet"`
 	LabVLANID         int    `yaml:"lab_vlan_id"`
 	AdminEmail        string `yaml:"admin_email"`
-	VaultShares          int    `yaml:"vault_shares"`
-	VaultThreshold       int    `yaml:"vault_threshold"`
+	VaultShares       int    `yaml:"vault_shares"`
+	VaultThreshold    int    `yaml:"vault_threshold"`
 	// Path on the controller where vault-init.json (Shamir shares + root token) is written.
 	// Must be outside the repository tree. Validated in Validate().
-	VaultInitOutputPath  string `yaml:"vault_init_output_path"`
+	VaultInitOutputPath string `yaml:"vault_init_output_path"`
 	// Populated from ACME_SERVER_URL env var; default: https://acme-v02.api.letsencrypt.org/directory
 	ACMEServerURL string `yaml:"-"`
 	// Populated from ACME_CA_CERT_URL env var; URL to download a PEM CA cert to trust for
@@ -131,9 +130,10 @@ type RunConfig struct {
 // Load loads config.yaml and .env, merges them into a RunConfig, and validates.
 func Load(configPath, envPath string) (*RunConfig, error) {
 	cfg := &Config{
-		VaultShares:    5,
-		VaultThreshold: 3,
-		SSHUser:        "ubuntu",
+		VaultShares:         5,
+		VaultThreshold:      3,
+		VaultInitOutputPath: "./vault-init.json",
+		SSHUser:             "ubuntu",
 	}
 
 	// Load config.yaml if it exists.

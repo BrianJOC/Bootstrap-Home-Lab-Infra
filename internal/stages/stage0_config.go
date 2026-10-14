@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joho/godotenv"
 	"gopkg.in/yaml.v3"
 
 	"github.com/homelab/bootstrap-home-infra/internal/config"
@@ -76,14 +75,8 @@ func (s *ConfigStage) Run(ctx context.Context, cfg *config.Config, sec *config.S
 
 	// Write config.yaml to the path the operator passed via --config.
 	sink.Log("info", s.Name(), fmt.Sprintf("writing config.yaml to %s", rc.ConfigPath), nil)
-	if err := writeConfigYAML(cfg, rc.ConfigPath); err != nil {
+	if err := config.WriteConfigYAML(rc.ConfigPath, cfg); err != nil {
 		return fmt.Errorf("writing config.yaml: %w", err)
-	}
-
-	// Write .env to the path the operator passed via --env.
-	sink.Log("info", s.Name(), fmt.Sprintf("writing .env to %s", rc.EnvPath), nil)
-	if err := writeEnvFile(sec, rc.EnvPath); err != nil {
-		return fmt.Errorf("writing .env: %w", err)
 	}
 
 	// Write run manifest with real SHA-256 hash (B2).
@@ -202,50 +195,6 @@ func versionAtLeast(ver, min string) bool {
 		}
 	}
 	return true // equal
-}
-
-// writeConfigYAML writes the structural config to the given path using yaml.v3.
-func writeConfigYAML(cfg *config.Config, path string) error {
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return fmt.Errorf("marshalling config: %w", err)
-	}
-	return os.WriteFile(path, data, 0600)
-}
-
-// writeEnvFile writes secrets to the given path with properly quoted values.
-// The file is created at 0600 from the start — no chmod race window.
-func writeEnvFile(sec *config.Secrets, path string) error {
-	envMap := map[string]string{
-		"CF_DNS_API_TOKEN":         sec.CloudflareAPIToken,
-		"BOOTSTRAP_ADMIN_PASSWORD": sec.AdminPassword,
-	}
-	// godotenv.Marshal returns properly quoted KEY="VALUE" content.
-	content, err := godotenv.Marshal(envMap)
-	if err != nil {
-		return fmt.Errorf("marshalling .env content: %w", err)
-	}
-	// Open at 0600 from creation — eliminates the write-then-chmod race.
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
-	if err != nil {
-		return fmt.Errorf("creating .env: %w", err)
-	}
-	defer f.Close()
-	if _, err := f.WriteString(content + "\n"); err != nil {
-		return fmt.Errorf("writing .env content: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("syncing .env: %w", err)
-	}
-	// Belt-and-suspenders: verify final mode.
-	fi, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("stat .env: %w", err)
-	}
-	if fi.Mode().Perm() != 0600 {
-		return fmt.Errorf(".env file mode is %o, expected 0600", fi.Mode().Perm())
-	}
-	return nil
 }
 
 // manifest is written to the run directory as manifest.json.
