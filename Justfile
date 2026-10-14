@@ -22,6 +22,7 @@ test-release-check:
     bin/python scripts/test-release-check.py
     bin/python scripts/test-dev-authorized.py
     bin/python scripts/test-gitops-guest-merge-unit.py
+    bin/python scripts/test-gitops-guest-authentik-unit.py
 
 # Use Hermit's pinned Python/uv to create the Python test environment.
 dev-setup:

@@ -47,6 +47,7 @@ GATES = {
     "seed-source-binding": "GitLab seed matches source files synchronized for this bootstrap",
 }
 HARDWARE_GATE = "raspberry-pi"
+EVIDENCE_PREFIX = "RELEASE_EVIDENCE:"
 
 
 def source_paths():
@@ -302,6 +303,120 @@ def sync_source(runner, files):
                           "source transfer failed; SSH identity must already be trusted", archive)
 
 
+def guest_json(runner, name, code):
+    """Run a fixed guest-side evidence reader and return its sanitized JSON record."""
+    command = f"cd {dev.GUEST_ROOT} && .venv/bin/python -c " + shlex.quote(code)
+    if not runner.guest(name, command, 120):
+        return None
+    log = ROOT / runner.state["gates"][name]["log"]
+    for line in log.read_text(errors="replace").splitlines():
+        if line.startswith(EVIDENCE_PREFIX):
+            try:
+                value = json.loads(line[len(EVIDENCE_PREFIX):])
+            except json.JSONDecodeError:
+                return None
+            return value if isinstance(value, dict) else None
+    return None
+
+
+SEED_EVIDENCE_READER = r'''import json,pathlib,socket
+root=pathlib.Path('/home/ansible/bootstrap-gitops-test')
+evidence=json.loads((root/'logs/release-check/seed-source-binding.json').read_text())
+manifest=json.loads((root/'test/release-source.json').read_text())
+identity=pathlib.Path('/etc/machine-id').read_text().strip()+':'+pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+print('RELEASE_EVIDENCE:'+json.dumps({'evidence':evidence,'manifest_source':manifest.get('source'),'fixture':identity},sort_keys=True))
+'''
+
+
+LIFECYCLE_EVIDENCE_READER = r'''import json,pathlib
+root=pathlib.Path('/home/ansible/bootstrap-gitops-test')
+checkpoint=json.loads(pathlib.Path(CHECKPOINT_PATH).read_text())
+auth=json.loads((root/'logs/release-check/authentik-login.json').read_text())
+resume=json.loads((root/'logs/release-check/full-resume.json').read_text())
+identity=pathlib.Path('/etc/machine-id').read_text().strip()+':'+pathlib.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+print('RELEASE_EVIDENCE:'+json.dumps({'checkpoint':checkpoint,'authentik':auth,'resume':resume,'fixture':identity},sort_keys=True))
+'''
+
+
+def verify_seed_evidence(value, source, fixture):
+    if not isinstance(value, dict):
+        return False, "seed source evidence is absent or unreadable"
+    evidence = value.get("evidence")
+    commit = evidence.get("main_sha") if isinstance(evidence, dict) else None
+    passed = (
+        isinstance(evidence, dict) and evidence.get("schema") == 1
+        and evidence.get("status") == "PASS"
+        and evidence.get("source_fingerprint") == source
+        and value.get("manifest_source") == source
+        and value.get("fixture") == fixture
+        and isinstance(commit, str) and re.fullmatch(r"[0-9a-f]{40,64}", commit)
+        and isinstance(evidence.get("matched_files"), int) and evidence["matched_files"] >= 25
+    )
+    return passed, f"seed files compared against synchronized source at {commit}" if passed else "seed source evidence is failed, stale, or bound to another source/fixture"
+
+
+def verify_lifecycle_evidence(value, source, fixture):
+    if not isinstance(value, dict):
+        return {"authentik-login": (False, "installed Authentik evidence is absent or unreadable"),
+                "full-resume": (False, "full-resume evidence is absent or unreadable")}
+    checkpoint = value.get("checkpoint")
+    auth, resume = value.get("authentik"), value.get("resume")
+    outcomes = auth.get("outcomes") if isinstance(auth, dict) else None
+    auth_outcomes_valid = isinstance(outcomes, dict)
+    current_fixture = value.get("fixture") == fixture
+    checkpoint_bound = (isinstance(checkpoint, dict)
+                        and type(checkpoint.get("deploy_pipeline")) is int and checkpoint["deploy_pipeline"] > 0
+                        and isinstance(checkpoint.get("deploy_pipeline_sha"), str)
+                        and re.fullmatch(r"[0-9a-f]{7,64}", checkpoint["deploy_pipeline_sha"])
+                        and isinstance(checkpoint.get("deploy_head_sha"), str)
+                        and re.fullmatch(r"[0-9a-f]{7,64}", checkpoint["deploy_head_sha"])
+                        and type(checkpoint.get("removal_pipeline")) is int and checkpoint["removal_pipeline"] > 0
+                        and isinstance(checkpoint.get("removal_pipeline_sha"), str)
+                        and re.fullmatch(r"[0-9a-f]{7,64}", checkpoint["removal_pipeline_sha"])
+                        and checkpoint.get("deploy_verified") is True
+                        and checkpoint.get("no_change_verified") is True
+                        and checkpoint.get("removal_verified") is True
+                        and checkpoint.get("removal_rerun_verified") is True)
+    auth_ok = (current_fixture and checkpoint_bound and isinstance(auth, dict)
+               and auth.get("schema") == 1 and auth.get("test") == "installed-authentik-allowed-denied-login"
+               and auth.get("status") == "PASS" and auth.get("source_fingerprint") == source
+               and auth.get("pipeline_id") == checkpoint.get("deploy_pipeline")
+               and auth.get("pipeline_sha") == checkpoint.get("deploy_pipeline_sha")
+               and auth.get("source_sha") == checkpoint.get("deploy_pipeline_sha")
+               and auth.get("merge_head_sha") == checkpoint.get("deploy_head_sha")
+               and checkpoint.get("authentik_login_verified") is True
+               and checkpoint.get("authentik_login_source_fingerprint") == source
+               and checkpoint.get("authentik_login_pipeline_id") == checkpoint.get("deploy_pipeline")
+               and checkpoint.get("authentik_login_pipeline_sha") == checkpoint.get("deploy_pipeline_sha")
+               and checkpoint.get("authentik_login_head_sha") == checkpoint.get("deploy_head_sha")
+               and auth.get("identities_cleaned") is True
+               and auth_outcomes_valid
+               and outcomes.get("allowed_http_status") == 200
+               and outcomes.get("allowed_reached_application") is True
+               and outcomes.get("denied_http_status") == 403
+               and outcomes.get("denied_forbidden") is True)
+    resume_ok = (current_fixture and checkpoint_bound and isinstance(resume, dict)
+                 and resume.get("schema") == 1 and resume.get("status") == "PASS"
+                 and resume.get("source_fingerprint") == source
+                 and resume.get("deploy_sha") == checkpoint.get("deploy_pipeline_sha")
+                 and checkpoint.get("full_resume_verified") is True
+                 and checkpoint.get("full_resume_source_fingerprint") == source
+                 and checkpoint.get("full_resume_pipeline_sha") == checkpoint.get("deploy_pipeline_sha")
+                 and resume.get("interrupted_pipeline_sha") == checkpoint.get("deploy_pipeline_sha")
+                 and resume.get("retry_pipeline_sha") == checkpoint.get("deploy_pipeline_sha")
+                 and resume.get("state_preserved") is True and resume.get("secrets_preserved") is True
+                 and resume.get("cancel_observed") is True
+                 and type(resume.get("interrupted_pipeline_id")) is int and resume["interrupted_pipeline_id"] > 0
+                 and type(resume.get("retry_pipeline_id")) is int and resume["retry_pipeline_id"] > 0
+                 and resume.get("retry_pipeline_id") != resume.get("interrupted_pipeline_id")
+                 and resume.get("interrupted_pipeline_status") in {"canceled", "failed"}
+                 and isinstance(resume.get("states_compared"), int) and resume["states_compared"] > 0)
+    return {
+        "authentik-login": (auth_ok, "installed Authentik allowed/denied evidence matches the active deploy pipeline" if auth_ok else "installed Authentik evidence is failed, stale, or bound to another source/fixture/deploy"),
+        "full-resume": (resume_ok, "interruption and recovery evidence matches the active deploy commit" if resume_ok else "full-resume evidence is failed, stale, or bound to another source/fixture/deploy"),
+    }
+
+
 def standup(runner, files):
     if not runner.task("integration-prerequisites", "doctor-integration", 120):
         return False
@@ -339,18 +454,67 @@ def standup(runner, files):
 
 
 def verify(runner):
+    # Capture the prior result before invalidating acceptance gates. A completed
+    # run starts a new lifecycle; an unfinished checkpoint remains resumable.
+    previous_lifecycle_pass = runner.state["gates"].get("merge-lifecycle", {}).get("status") == "PASS"
+    new_lifecycle = not runner.state.get("acceptance_checkpoint") or previous_lifecycle_pass
+    if new_lifecycle:
+        runner.state["acceptance_checkpoint"] = f"logs/release-acceptance-{time.time_ns()}.json"
+        write_json(OUT / "state.json", runner.state)
+    for name in ("seed-source-binding", "merge-lifecycle", "authentik-login", "full-resume"):
+        runner.record(name, "NOT_RUN", "verification attempt has not collected current evidence")
+
     if not probe(runner):
         return False
     if not sync_source(runner, source_paths()):
         return False
-    # Resume an unfinished lifecycle; after success start a new lifecycle instead
-    # of accepting the previous checkpoint's booleans as fresh runtime evidence.
-    if not runner.state.get("acceptance_checkpoint") or runner.state["gates"].get("merge-lifecycle", {}).get("status") == "PASS":
+
+    # A changed fixture clears the checkpoint in probe(). Start with fresh guest
+    # state if that happened; otherwise retain an interrupted lifecycle's path.
+    checkpoint = runner.state.get("acceptance_checkpoint")
+    if not checkpoint:
+        new_lifecycle = True
         runner.state["acceptance_checkpoint"] = f"logs/release-acceptance-{time.time_ns()}.json"
         write_json(OUT / "state.json", runner.state)
-    checkpoint = runner.state["acceptance_checkpoint"]
-    command = f"cd {dev.GUEST_ROOT} && .venv/bin/python scripts/test-gitops-guest-merge.py --checkpoint " + shlex.quote(checkpoint)
-    return runner.guest("merge-lifecycle", command, 14420)
+        checkpoint = runner.state["acceptance_checkpoint"]
+    if new_lifecycle:
+        for name in ("authentik-login", "full-resume"):
+            if runner.state["gates"].get(name, {}).get("status") != "NOT_RUN":
+                runner.record(name, "NOT_RUN", "awaiting evidence from the new acceptance lifecycle")
+    fixture = runner.state.get("fixture")
+    if not isinstance(fixture, str) or not fixture:
+        runner.record("seed-source-binding", "FAIL", "guest fixture identity is missing")
+        return False
+
+    # This comparison must run before the acceptance fixture edits main. It
+    # proves the GitLab seed matches the source synchronized for this guest.
+    runner.record("seed-source-binding", "RUNNING", "comparing seeded GitLab files with synchronized source")
+    seed_command = f"cd {dev.GUEST_ROOT} && .venv/bin/python scripts/test-gitops-seed-source.py"
+    seed_ran = runner.guest("seed-source-test", seed_command, 180)
+    seed_value = guest_json(runner, "seed-source-evidence", SEED_EVIDENCE_READER) if seed_ran else None
+    seed_ok, seed_detail = verify_seed_evidence(seed_value, runner.state["source"], fixture)
+    runner.record("seed-source-binding", "PASS" if seed_ok else "FAIL",
+                  f"{seed_detail}; checkpoint {Path(checkpoint).name}")
+    if not seed_ok:
+        return False
+
+    command = (f"cd {dev.GUEST_ROOT} && .venv/bin/python scripts/test-gitops-guest-merge.py"
+               " --source-fingerprint " + shlex.quote(runner.state["source"])
+               + " --checkpoint " + shlex.quote(checkpoint))
+    lifecycle_ok = runner.guest("merge-lifecycle", command, 14420)
+    if not lifecycle_ok:
+        for name in ("authentik-login", "full-resume"):
+            runner.record(name, "FAIL", "acceptance lifecycle did not complete; no passing evidence collected")
+        return False
+
+    # Merge exit status is necessary but not sufficient. Read and bind each
+    # generated record to the current fixture, source, and saved checkpoint.
+    code = LIFECYCLE_EVIDENCE_READER.replace("CHECKPOINT_PATH", repr(str(Path(dev.GUEST_ROOT) / checkpoint)))
+    lifecycle_value = guest_json(runner, "lifecycle-evidence", code)
+    evidence_results = verify_lifecycle_evidence(lifecycle_value, runner.state["source"], fixture)
+    for name, (passed, detail) in evidence_results.items():
+        runner.record(name, "PASS" if passed else "FAIL", detail)
+    return all(passed for passed, _ in evidence_results.values())
 
 
 def main():
