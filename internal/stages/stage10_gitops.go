@@ -31,6 +31,65 @@ func (*GitOpsStage) Check(_ context.Context, cfg *config.Config, rc *runcontext.
 	_, _, err = client.Run("sudo grep -Fxq 'gitops-runtime=1' /var/lib/bootstrap-home-infra/gitops-runtime-configured && sudo test -x /usr/local/sbin/bootstrap-gitops-host-binary && sudo test -x /usr/local/sbin/bootstrap-gitops-host && sudo test -s /etc/bootstrap-home-infra/gitops-host.json")
 	return err == nil, nil
 }
+
+const day2TokenValidationRuby = `token = STDIN.read.strip
+record = PersonalAccessToken.find_by_token(token)
+abort('Stored day-2 credential is inactive; deliberate renewal required') unless record && record.active?
+puts token`
+
+const day2TokenCreationRuby = `user = User.find_by!(username: 'root')
+abort('Bootstrap user is not an administrator') unless user.admin?
+record = user.personal_access_tokens.create!(name: 'bootstrap-day2-iac', scopes: ['api'], expires_at: 365.days.from_now)
+puts record.token`
+
+// day2CredentialScript runs as root on the GitLab host. Rails only validates
+// or creates the token; the privileged shell owns its lock and durable file.
+// Parameters are fixed production paths, with test-only overrides for the
+// shell integration fixtures.
+func day2CredentialScript(directory, railsExecutable string) string {
+	return fmt.Sprintf(`set -Eeuo pipefail
+umask 077
+directory=%s
+rails=%s
+lock_file="$directory/bootstrap-day2-iac.lock"
+token_file="$directory/bootstrap-day2-iac.token"
+[[ ! -L "$lock_file" && ! -L "$token_file" ]] || exit 1
+exec 9>>"$lock_file"
+[[ -O "$lock_file" ]] || exit 1
+chmod 0600 "$lock_file"
+flock -x 9
+
+if [[ -e "$token_file" ]]; then
+  [[ -f "$token_file" && ! -L "$token_file" && -O "$token_file" ]] || exit 1
+  [[ "$(find "$token_file" -prune -type f -perm 600 -print)" == "$token_file" ]] || exit 1
+  token=$(cat -- "$token_file")
+  [[ "$token" =~ ^glpat-[A-Za-z0-9_.-]{16,128}$ ]] || exit 1
+  if validated=$(printf '%%s\n' "$token" | "$rails" runner %s 2>/dev/null); then
+    [[ "$validated" == "$token" ]] || exit 1
+    printf '%%s\n' "$token"
+    exit 0
+  fi
+  # Never replace an existing credential automatically, including an inactive one.
+  exit 1
+fi
+
+token=$("$rails" runner %s 2>/dev/null) || exit 1
+[[ "$token" =~ ^glpat-[A-Za-z0-9_.-]{16,128}$ ]] || exit 1
+temporary=$(mktemp "$token_file.tmp.XXXXXX")
+trap 'rm -f -- "$temporary"' EXIT
+chmod 0600 "$temporary"
+printf '%%s' "$token" >"$temporary"
+[[ ! -e "$token_file" ]] || exit 1
+mv -- "$temporary" "$token_file"
+trap - EXIT
+printf '%%s\n' "$token"
+`, shellSingleQuote(directory), shellSingleQuote(railsExecutable), shellSingleQuote(day2TokenValidationRuby), shellSingleQuote(day2TokenCreationRuby))
+}
+
+func shellSingleQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
 func (*GitOpsStage) Run(ctx context.Context, cfg *config.Config, sec *config.Secrets, rc *runcontext.RunContext, sink stage.Sink) error {
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath, rc.KnownHostsPath)
 	if err != nil {
@@ -62,7 +121,9 @@ func (*GitOpsStage) Run(ctx context.Context, cfg *config.Config, sec *config.Sec
 	}
 	// Create a dedicated day-2 API credential rather than shipping the two-day
 	// bootstrap PAT to CI. Inventory it in Vault, outside GitLab CI variables.
-	stdout, _, err := client.Run(`sudo gitlab-rails runner "File.umask(0077); File.open('/etc/gitlab/bootstrap-day2-iac.lock', File::RDWR | File::CREAT, 0600) do |lock|; lock.flock(File::LOCK_EX); path = '/etc/gitlab/bootstrap-day2-iac.token'; if File.exist?(path); value = File.read(path).strip; record = PersonalAccessToken.find_by_token(value); abort('Stored day-2 credential is inactive; deliberate renewal required') unless record && record.active?; else; user = User.find_by!(username: 'root'); abort('Bootstrap user is not an administrator') unless user.admin?; record = user.personal_access_tokens.create!(name: 'bootstrap-day2-iac', scopes: ['api'], expires_at: 365.days.from_now); value = record.token; File.write(path, value, mode: 'w', perm: 0600); end; puts value; end"`)
+	stdout, _, err := client.Run("sudo bash -c " + shellSingleQuote(day2CredentialScript(
+		"/etc/gitlab", "/opt/gitlab/bin/gitlab-rails",
+	)))
 	if err != nil {
 		return fmt.Errorf("creating day-2 GitLab API credential failed")
 	}

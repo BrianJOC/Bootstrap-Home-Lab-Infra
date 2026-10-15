@@ -60,3 +60,35 @@ part of this tranche.
 The operator subsequently authorized pushing these reviewed repairs to `main`
 and continuing the remaining disposable acceptance work. Combined acceptance
 remains unproven until its measured gates pass.
+
+The reviewed fixes were pushed as `8609bfd`; GitHub source CI passed in run
+[38487820390](https://github.com/BrianJOC/Bootstrap-Home-Lab-Infra/actions/runs/38487820390).
+The resumed standup passed prerequisites, mocks, guest identity and source sync,
+then stopped at the Vault stage. The execution agent is diagnosing this stop
+before repeating the bootstrap. No combined lifecycle pass is claimed.
+
+The first stop was confirmed as expected sealed Vault after guest reboot.
+The original synthetic recovery file exists. Luna used the supported explicit
+`vault unseal --from-init-file` command with the existing threshold shares;
+Vault unsealed successfully. A focused standup retry is now progressing with
+the same fixture, credentials and state.
+
+Subsequent progress: k3s state migration failed because the old two-day
+synthetic GitLab bootstrap token returned HTTP 401. Primary ran only the
+existing protected token-validation/refresh tasks; the API then returned 200
+and the focused k3s retry passed. Full standup reached the final GitOps stage.
+It exposed a source defect: Omnibus `gitlab-rails` runs as its service user
+(observed UID 995), which cannot write the root-owned `/etc/gitlab` lock/token
+paths used by the day-2 credential code. Luna owns a focused repair and
+behavioral regression tests; primary owns guest execution and review.
+No combined lifecycle or fresh-install pass is claimed.
+
+The privilege repair now keeps lock/token file IO in the privileged shell and
+passes an existing token to Rails only on stdin. It rejects unsafe existing
+file ownership/modes and does not automatically replace an inactive token.
+Behavioral tests cover creation, valid reuse, inactive/unsafe-file rejection,
+and non-disclosure. Guest inspection also found dotted GitLab token metadata;
+validation now matches the existing Ansible token format. The negative-mode
+test explicitly sets its unsafe mode so it works under the release runner's
+umask 077. The corrected full `release-source` sequence passed. Focused guest
+GitOps validation is still running; no integration pass is implied yet.

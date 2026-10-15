@@ -1,0 +1,27 @@
+{
+  "scope": "Existing repository-owned disposable ARM64 QEMU guest; synthetic credentials only",
+  "pushed_runner_fix": "8609bfd83372cc98a46c0a58e874409d7b9cc9a9",
+  "github_source_ci": {
+    "run": 38487820390,
+    "result": "PASS"
+  },
+  "source_fingerprint_before_day2_file_repair": "5bf586f03566caeed8102bdf22dc1681e79c7ee355c653926dda38a4e82d8770",
+  "milestones": [
+    {"check": "Docker and integration prerequisites", "result": "PASS"},
+    {"check": "Existing snapshot resumed without replacement", "result": "PASS"},
+    {"check": "Vault initialized and sealed after reboot; original synthetic recovery material present", "result": "CONFIRMED"},
+    {"check": "Supported explicit unseal using original synthetic threshold shares", "result": "PASS"},
+    {"check": "Old synthetic bootstrap token API validity", "result": "HTTP 401"},
+    {"check": "Existing protected Ansible token-refresh tasks, limited to six token tasks", "result": "PASS; HTTP 200 afterward"},
+    {"check": "Focused k3s retry including Terraform GitLab state handoff", "result": "PASS"},
+    {"check": "Full standup after k3s recovery", "result": "FAIL at final gitops stage"},
+    {"check": "Read-only Rails identity and protected-directory access", "result": "Effective UID 995; /etc/gitlab not writable; administrator present"}
+  ],
+  "confirmed_source_defect": "Day-2 credential creation tries to manage root-owned lock/token files inside a Rails process that runs as the unprivileged GitLab service user",
+  "day2_file_repair_source_validation": "PASS: full release-source sequence after privilege, dotted-token and umask fixture corrections",
+  "next_gate": "Focused guest GitOps retry, complete standup and current-source lifecycle",
+  "combined_lifecycle": "NOT_RUN",
+  "fresh_install": "NOT_RUN",
+  "physical_pi": "NOT_VERIFIED",
+  "limitations": "Detailed logs and all credential values remain private. No real infrastructure was inspected or mutated. This evidence does not establish release completion."
+}
