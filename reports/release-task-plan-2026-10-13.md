@@ -92,3 +92,25 @@ validation now matches the existing Ansible token format. The negative-mode
 test explicitly sets its unsafe mode so it works under the release runner's
 umask 077. The corrected full `release-source` sequence passed. Focused guest
 GitOps validation is still running; no integration pass is implied yet.
+
+## October 19 checkpoint
+
+- The credential repair was pushed as `413d165`; GitHub CI run
+  [38799364340](https://github.com/BrianJOC/Bootstrap-Home-Lab-Infra/actions/runs/38799364340)
+  passed. The working tree was synchronized before this evidence update.
+- The preserved guest completed the bounded full `release-standup`: both
+  `bootstrap` and runtime `guest` gates passed. This proves resumed completion,
+  not a clean installation.
+- `release-verify` stopped at the seed-source gate before the merge lifecycle.
+  An independent authenticated read-only hash comparison confirmed that GitLab's
+  `internal/stages/stage10_gitops.go` differs from the synchronized current source.
+  Syncing scripts to the guest does not update its handed-off GitLab seed.
+- Rather than replay local Terraform after handoff, primary cleanly powered off
+  that guest and preserved its private disk at
+  `test/images/preserved-recovered-20261019T185126Z.qcow2` (ignored, mode 0600).
+  Private pre-fresh runner state/results were also retained under ignored logs.
+- A new GPT-6 Luna execution agent owns the required fresh-install and lifecycle
+  proof from stable `413d165`, using the existing base image and scoped helpers.
+  It must preserve the recovered disk, keep SSH trust checks, and report the
+  first concrete failing gate. No fresh-install or combined lifecycle pass
+  exists yet; physical hardware and broader product follow-ups remain separate.
