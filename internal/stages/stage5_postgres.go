@@ -51,6 +51,7 @@ func (s *PostgreSQLStage) Run(_ context.Context, cfg *config.Config, sec *config
 			"internal_domain":     cfg.InternalDomain,
 			"bootstrap_server_ip": cfg.BootstrapServerIP,
 			"pg_admin_password":   sec.AdminPassword,
+			"service_data_root":   cfg.DataPath(),
 		},
 	)
 }

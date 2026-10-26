@@ -51,6 +51,7 @@ func (s *GitLabStage) Run(_ context.Context, cfg *config.Config, sec *config.Sec
 			"bootstrap_server_ip":   cfg.BootstrapServerIP,
 			"gitlab_admin_password": sec.AdminPassword,
 			"admin_email":           cfg.AdminEmail,
+			"service_data_root":     cfg.DataPath(),
 		},
 	)
 }

@@ -50,6 +50,7 @@ func (s *DNSStage) Run(_ context.Context, cfg *config.Config, sec *config.Secret
 			"internal_domain":           cfg.InternalDomain,
 			"bootstrap_server_ip":       cfg.BootstrapServerIP,
 			"technitium_admin_password": sec.AdminPassword,
+			"service_data_root":         cfg.DataPath(),
 		},
 	)
 }

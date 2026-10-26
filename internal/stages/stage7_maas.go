@@ -49,9 +49,11 @@ func (s *MAASStage) Run(_ context.Context, cfg *config.Config, sec *config.Secre
 		map[string]string{
 			"internal_domain":     cfg.InternalDomain,
 			"bootstrap_server_ip": cfg.BootstrapServerIP,
+			"admin_email":         cfg.AdminEmail,
 			"lab_vlan_subnet":     cfg.LabVLANSubnet,
 			"lab_vlan_id":         intToStr(cfg.LabVLANID),
 			"maas_admin_password": sec.AdminPassword,
+			"service_data_root":   cfg.DataPath(),
 		},
 	)
 }
