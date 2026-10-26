@@ -229,6 +229,7 @@ func (s *GitLabStage) Run(_ context.Context, cfg *config.Config, sec *config.Sec
 			gitlabBaseURL(cfg),
 			projectID,
 			strings.TrimSpace(string(tokenBytes)),
+			cfg.APIInsecure,
 		); err != nil {
 			return err
 		}

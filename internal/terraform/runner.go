@@ -293,7 +293,7 @@ func outputDataDir(statePath, component string) string {
 // HTTP backend, verifies lineage and serial, and deliberately keeps the local
 // state as a rollback copy. Credentials are supplied only through environment
 // variables so they do not enter process arguments or generated files.
-func (r *Runner) MigrateStateToGitLab(component, moduleDir, gitlabURL, projectID, token string) error {
+func (r *Runner) MigrateStateToGitLab(component, moduleDir, gitlabURL, projectID, token string, insecure bool) error {
 	statePath, err := StatePath(component)
 	if err != nil {
 		return err
@@ -347,7 +347,7 @@ func (r *Runner) MigrateStateToGitLab(component, moduleDir, gitlabURL, projectID
 	environment = replaceEnv(environment, "TF_HTTP_LOCK_METHOD", "POST")
 	environment = replaceEnv(environment, "TF_HTTP_UNLOCK_METHOD", "DELETE")
 	environment = replaceEnv(environment, "TF_HTTP_RETRY_WAIT_MIN", "5")
-	if err := r.run(migrationDir, environment, migrationInitArgs(gitlabURL)...); err != nil {
+	if err := r.run(migrationDir, environment, migrationInitArgs(gitlabURL, insecure)...); err != nil {
 		return err
 	}
 	pushErr := r.run(migrationDir, environment, statePushArgs(migrationSourcePath)...)
@@ -407,9 +407,13 @@ func (r *Runner) MigrateStateToGitLab(component, moduleDir, gitlabURL, projectID
 	return nil
 }
 
-func migrationInitArgs(gitlabURL string) []string {
+// migrationInitArgs builds the init arguments for the GitLab state handoff. TLS
+// verification is skipped only for explicit test endpoints (loopback) or when the
+// operator set BOOTSTRAP_API_INSECURE -- the same knob the API client and the
+// Terraform providers honour. Otherwise the backend verifies certificates normally.
+func migrationInitArgs(gitlabURL string, insecure bool) []string {
 	args := []string{"init", "-input=false", "-no-color", "-migrate-state", "-force-copy"}
-	if strings.Contains(gitlabURL, "127.0.0.1") || strings.Contains(gitlabURL, "localhost") {
+	if insecure || strings.Contains(gitlabURL, "127.0.0.1") || strings.Contains(gitlabURL, "localhost") {
 		args = append(args, "-backend-config=skip_cert_verification=true")
 	}
 	return args

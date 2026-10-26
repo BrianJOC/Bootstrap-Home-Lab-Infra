@@ -155,5 +155,6 @@ func (s *MAASStage) Run(_ context.Context, cfg *config.Config, sec *config.Secre
 		gitlabBaseURL(cfg),
 		projectID,
 		trimmedGitLabToken,
+		cfg.APIInsecure,
 	)
 }
