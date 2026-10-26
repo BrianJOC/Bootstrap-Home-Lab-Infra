@@ -62,6 +62,7 @@
     project_src: "{{ authentik_data_dir }}"
     state: absent
     remove_volumes: false
+    remove_orphans: true
   when: >-
     authentik_compose_template is changed or
     not authentik_compose_topology.stat.exists
@@ -78,6 +79,7 @@
   community.docker.docker_compose_v2:
     project_src: "{{ authentik_data_dir }}"
     state: present
+    remove_orphans: true
 
 - name: Record reconciled Authentik Compose topology
   ansible.builtin.file:
