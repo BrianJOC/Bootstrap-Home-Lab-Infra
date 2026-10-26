@@ -75,7 +75,7 @@ Copy `config.yaml.example` to `config.yaml` and fill in your values. Secrets go 
 | `bootstrap_server_ip` | IP of the target bootstrap server (service binding and database access) |
 | `lab_vlan_subnet` | CIDR for the lab network (e.g. `10.0.0.0/24`) |
 | `admin_email` | Email for ACME registration and Authentik admin |
-| `vault_init_output_path` | Where to write Vault unseal keys (default: `./vault-init.json`) |
+| `vault_init_output_path` | Controller-local location for Vault unseal keys (default: `~/.bootstrap/vault-init.json`) |
 | `data_disk` | *(optional)* Secondary disk device (e.g. `/dev/sda`) — see below |
 
 **`.env`** (secrets — never commit):

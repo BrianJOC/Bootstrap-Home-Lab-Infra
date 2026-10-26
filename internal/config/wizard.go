@@ -87,6 +87,10 @@ func FromWizardResult(r WizardResult) (*RunConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	vaultInitOutputPath, err := mustGet("vault_init_output_path")
+	if err != nil {
+		return nil, err
+	}
 
 	cfToken, err := mustSecret("CF_DNS_API_TOKEN")
 	if err != nil {
@@ -108,7 +112,7 @@ func FromWizardResult(r WizardResult) (*RunConfig, error) {
 		AdminEmail:          adminEmail,
 		VaultShares:         5,
 		VaultThreshold:      3,
-		VaultInitOutputPath: "./vault-init.json",
+		VaultInitOutputPath: vaultInitOutputPath,
 	}
 	if v := r.Values["lab_vlan_id"]; v != "" {
 		id, err := strconv.Atoi(strings.TrimSpace(v))

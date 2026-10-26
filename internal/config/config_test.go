@@ -120,6 +120,15 @@ func TestValidate_MissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestValidate_RejectsRelativeVaultInitOutputPath(t *testing.T) {
+	rc := validRunConfig()
+	rc.VaultInitOutputPath = "vault-init.json"
+	err := Validate(rc)
+	if err == nil || !strings.Contains(err.Error(), "vault_init_output_path") {
+		t.Fatalf("Validate() error = %v, want vault_init_output_path error", err)
+	}
+}
+
 // ── DataPath ──────────────────────────────────────────────────────────────────
 
 func TestDataPath_NoDisk(t *testing.T) {

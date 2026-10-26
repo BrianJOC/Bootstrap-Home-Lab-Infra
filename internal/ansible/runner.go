@@ -42,7 +42,11 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 	r.sink.Log("info", "ansible", fmt.Sprintf("running playbook %s with vars: %s", playbookPath, strings.Join(keys, ", ")), nil)
 
 	// Write a temp INI inventory so the [bootstrap_target] group is defined.
-	invFile, err := buildInventoryFile(strings.TrimSuffix(inventory, ","))
+	invFile, err := buildInventoryFile(
+		strings.TrimSuffix(inventory, ","),
+		r.sshClient.User(),
+		r.sshClient.KeyPath(),
+	)
 	if err != nil {
 		return fmt.Errorf("building inventory: %w", err)
 	}
@@ -120,9 +124,9 @@ func (r *Runner) RunPlaybook(playbookPath, inventory string, extraVars map[strin
 // IMPORTANT: Any new secret added to config.Secrets that may be present in
 // the process environment must also be listed here to prevent leakage.
 var secretEnvKeys = map[string]struct{}{
-	"CF_DNS_API_TOKEN":          {},
-	"CLOUDFLARE_DNS_API_TOKEN":  {},
-	"BOOTSTRAP_ADMIN_PASSWORD":  {},
+	"CF_DNS_API_TOKEN":         {},
+	"CLOUDFLARE_DNS_API_TOKEN": {},
+	"BOOTSTRAP_ADMIN_PASSWORD": {},
 }
 
 // safeEnv returns os.Environ() with all known bootstrap secret keys removed.
@@ -143,15 +147,23 @@ func safeEnv() []string {
 
 // buildInventoryFile writes a temporary INI inventory file that defines the
 // [bootstrap_target] group expected by all stage playbooks. The hostPort
-// argument is "host:port" or bare "host" (port defaults to 22).
+// argument is "host:port" or bare "host" (port defaults to 22). The explicit
+// SSH user and key ensure Ansible uses the identity already validated by the
+// stage's SSH preflight instead of repository test defaults.
 // The caller must remove the returned file when done.
-func buildInventoryFile(hostPort string) (string, error) {
+func buildInventoryFile(hostPort, user, keyPath string) (string, error) {
 	host, port, err := net.SplitHostPort(hostPort)
 	if err != nil {
 		host = hostPort
 		port = "22"
 	}
-	content := fmt.Sprintf("[bootstrap_target]\n%s ansible_port=%s\n", host, port)
+	content := fmt.Sprintf(
+		"[bootstrap_target]\n%s ansible_port=%s ansible_user=%q ansible_ssh_private_key_file=%q\n",
+		host,
+		port,
+		user,
+		keyPath,
+	)
 	f, err := os.CreateTemp("", "bootstrap-inventory-*.ini")
 	if err != nil {
 		return "", err

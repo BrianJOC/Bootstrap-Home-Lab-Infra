@@ -26,25 +26,26 @@ func typeKey(s string) tea.Msg {
 
 // advanceTo returns a wizardModel at field index idx (0-based) with all prior
 // fields filled with valid placeholder values. Uses a bare IPv4 for field 0,
-// which causes field 5 (bootstrap_server_ip) to be skipped automatically.
-// Field indices after the skip: 6=lab_vlan_subnet, 7=admin_email,
-// 8=CF_DNS_API_TOKEN, 9=BOOTSTRAP_ADMIN_PASSWORD.
+// which causes field 7 (bootstrap_server_ip) to be skipped automatically.
 func advanceTo(idx int, resultCh chan config.WizardResult) *wizardModel {
 	m := newWizardModel(InitialModeWizard, emptyPreload(), resultCh)
 	m.setSize(80, 24)
 
 	// One valid value per displayed field (field 7 / bootstrapIPFieldIdx is skipped for bare IPv4).
-	// indices 0..8 correspond to fields 0,1,2,3,4, 6,7,8,9 (5 is skipped).
+	// Position 7 is consumed by the skipped bootstrap-IP field. The remaining
+	// values map to fields 8, 9, and 10.
 	validValues := []string{
-		"192.168.1.100",  // 0: target_host (bare IP → skip field 5)
-		"ubuntu",         // 1: ssh_user
-		"/tmp/id_test",   // 2: ssh_key_path
-		"home.lab",       // 3: internal_domain
-		"zoneabc123",     // 4: cloudflare_zone_id
-		"10.0.0.0/24",    // 5 (display): lab_vlan_subnet  (field index 6)
-		"admin@test.com", // 6 (display): admin_email      (field index 7)
-		"tok-abc",        // 7 (display): CF_DNS_API_TOKEN  (field index 8)
-		"pw-placeholder", // 8 (display): first BOOTSTRAP_ADMIN_PASSWORD entry (field index 9)
+		"192.168.1.100",        // 0: target_host (bare IP → skip field 5)
+		"ubuntu",               // 1: ssh_user
+		"/tmp/id_test",         // 2: ssh_key_path
+		"home.lab",             // 3: internal_domain
+		"zoneabc123",           // 4: cloudflare_zone_id
+		"10.0.0.0/24",          // 5: lab_vlan_subnet
+		"admin@test.com",       // 6: admin_email
+		"ignored-bootstrap-ip", // 7: bootstrap_server_ip (auto-skipped)
+		"/tmp/vault-init.json", // 8: vault_init_output_path
+		"tok-abc",              // 9: CF_DNS_API_TOKEN
+		"pw-placeholder",       // 10: first BOOTSTRAP_ADMIN_PASSWORD entry
 	}
 
 	for i := 0; i < idx && i < len(validValues); i++ {
@@ -118,9 +119,8 @@ func TestWizardModel_ValidationError(t *testing.T) {
 
 func TestWizardModel_PasswordMasked(t *testing.T) {
 	resultCh := make(chan config.WizardResult, 1)
-	// CF_DNS_API_TOKEN is field index 8 (display index 7 with skip).
-	// advanceTo(8) advances through 8 fields, leaving cursor at field index 8.
-	m := advanceTo(8, resultCh)
+	// CF_DNS_API_TOKEN is field index 9. advanceTo(9) leaves the cursor there.
+	m := advanceTo(9, resultCh)
 	if m.fields[m.cursor].key != "CF_DNS_API_TOKEN" {
 		t.Fatalf("expected CF_DNS_API_TOKEN at cursor %d, got %q", m.cursor, m.fields[m.cursor].key)
 	}
@@ -170,8 +170,8 @@ func TestWizardModel_PreambleReject(t *testing.T) {
 
 func TestWizardModel_PasswordConfirmMismatch(t *testing.T) {
 	resultCh := make(chan config.WizardResult, 1)
-	// Field 9 = BOOTSTRAP_ADMIN_PASSWORD. advanceTo(9) advances through 9 fields.
-	m := advanceTo(9, resultCh)
+	// Field 10 = BOOTSTRAP_ADMIN_PASSWORD. advanceTo(10) advances through 10 fields.
+	m := advanceTo(10, resultCh)
 	if m.fields[m.cursor].key != "BOOTSTRAP_ADMIN_PASSWORD" {
 		t.Fatalf("expected BOOTSTRAP_ADMIN_PASSWORD at cursor %d, got %q", m.cursor, m.fields[m.cursor].key)
 	}
@@ -209,26 +209,25 @@ func TestWizardModel_PasswordConfirmMismatch(t *testing.T) {
 
 func TestWizardModel_BackNavigation_SkipsBootstrapIP(t *testing.T) {
 	resultCh := make(chan config.WizardResult, 1)
-	// advanceTo(8) fills fields 0–7 (skipping bootstrapIPFieldIdx=7 auto),
-	// leaving cursor at 8 (CF_DNS_API_TOKEN).
-	m := advanceTo(8, resultCh)
+	// advanceTo(9) leaves the cursor at CF_DNS_API_TOKEN.
+	m := advanceTo(9, resultCh)
 	if m.fields[m.cursor].key != "CF_DNS_API_TOKEN" {
 		t.Fatalf("setup: cursor %d = %q, want CF_DNS_API_TOKEN", m.cursor, m.fields[m.cursor].key)
 	}
 	next, _ := m.update(pressEsc())
 	m2 := next.(*wizardModel)
-	// Should land on admin_email (index 6), skipping bootstrap_server_ip (index 7).
-	if m2.cursor != 6 {
-		t.Errorf("after esc from CF_DNS_API_TOKEN: cursor = %d, want 6 (admin_email)", m2.cursor)
+	// Should land on vault_init_output_path (index 8).
+	if m2.cursor != 8 {
+		t.Errorf("after esc from CF_DNS_API_TOKEN: cursor = %d, want 8 (vault_init_output_path)", m2.cursor)
 	}
-	if m2.fields[m2.cursor].key != "admin_email" {
-		t.Errorf("cursor %d = %q, want admin_email", m2.cursor, m2.fields[m2.cursor].key)
+	if m2.fields[m2.cursor].key != "vault_init_output_path" {
+		t.Errorf("cursor %d = %q, want vault_init_output_path", m2.cursor, m2.fields[m2.cursor].key)
 	}
 }
 
 func TestWizardModel_CompletionEmitsResult(t *testing.T) {
 	resultCh := make(chan config.WizardResult, 1)
-	m := advanceTo(9, resultCh) // at BOOTSTRAP_ADMIN_PASSWORD
+	m := advanceTo(10, resultCh) // at BOOTSTRAP_ADMIN_PASSWORD
 
 	// First entry.
 	m.input.SetValue("securepass")
@@ -260,5 +259,21 @@ func TestWizardModel_CompletionEmitsResult(t *testing.T) {
 		}
 	default:
 		t.Error("WizardResult not sent on resultCh")
+	}
+}
+
+func TestWizardModel_DefaultVaultInitOutputPath(t *testing.T) {
+	m := newWizardModel(InitialModeWizard, emptyPreload(), make(chan config.WizardResult, 1))
+	if got, want := m.values["vault_init_output_path"], config.DefaultVaultInitOutputPath(); got != want {
+		t.Errorf("vault_init_output_path = %q, want %q", got, want)
+	}
+}
+
+func TestValidateAbsolutePath(t *testing.T) {
+	if err := validateAbsolutePath("relative/vault-init.json"); err == nil {
+		t.Fatal("expected relative path validation error")
+	}
+	if err := validateAbsolutePath("/home/user/.bootstrap/vault-init.json"); err != nil {
+		t.Fatalf("unexpected absolute path validation error: %v", err)
 	}
 }

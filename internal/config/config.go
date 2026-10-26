@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -75,6 +76,16 @@ type Secrets struct {
 	AdminPassword      string // BOOTSTRAP_ADMIN_PASSWORD
 }
 
+// DefaultVaultInitOutputPath returns the controller-local location used for
+// Vault unseal keys and the initial root token.
+func DefaultVaultInitOutputPath() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(homeDir, ".bootstrap", "vault-init.json")
+}
+
 // TargetArch represents the architecture of the target host.
 type TargetArch string
 
@@ -132,7 +143,7 @@ func Load(configPath, envPath string) (*RunConfig, error) {
 	cfg := &Config{
 		VaultShares:         5,
 		VaultThreshold:      3,
-		VaultInitOutputPath: "./vault-init.json",
+		VaultInitOutputPath: DefaultVaultInitOutputPath(),
 		SSHUser:             "ubuntu",
 	}
 
@@ -201,6 +212,9 @@ func Validate(rc *RunConfig) error {
 
 	if len(missing) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missing, ", "))
+	}
+	if !filepath.IsAbs(rc.VaultInitOutputPath) {
+		return fmt.Errorf("vault_init_output_path %q must be an absolute path", rc.VaultInitOutputPath)
 	}
 
 	// Validate internal_domain against a strict hostname allowlist to prevent

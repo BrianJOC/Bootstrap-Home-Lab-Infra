@@ -10,7 +10,7 @@ import (
 // ── buildInventoryFile ────────────────────────────────────────────────────────
 
 func TestBuildInventoryFile_HostPort(t *testing.T) {
-	path, err := buildInventoryFile("192.168.1.10:2222")
+	path, err := buildInventoryFile("192.168.1.10:2222", "bootstrap", "/tmp/id_ed25519")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -30,10 +30,16 @@ func TestBuildInventoryFile_HostPort(t *testing.T) {
 	if !strings.Contains(got, "ansible_port=2222") {
 		t.Errorf("inventory missing ansible_port=2222:\n%s", got)
 	}
+	if !strings.Contains(got, `ansible_user="bootstrap"`) {
+		t.Errorf("inventory missing SSH user:\n%s", got)
+	}
+	if !strings.Contains(got, `ansible_ssh_private_key_file="/tmp/id_ed25519"`) {
+		t.Errorf("inventory missing SSH key path:\n%s", got)
+	}
 }
 
 func TestBuildInventoryFile_HostOnly(t *testing.T) {
-	path, err := buildInventoryFile("10.0.0.5")
+	path, err := buildInventoryFile("10.0.0.5", "bootstrap", "/tmp/id_ed25519")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -50,7 +56,7 @@ func TestBuildInventoryFile_HostOnly(t *testing.T) {
 }
 
 func TestBuildInventoryFile_PermissionsAre0600(t *testing.T) {
-	path, err := buildInventoryFile("10.0.0.1")
+	path, err := buildInventoryFile("10.0.0.1", "bootstrap", "/tmp/id_ed25519")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -69,7 +75,7 @@ func TestBuildInventoryFile_PermissionsAre0600(t *testing.T) {
 
 func TestBuildExtraVarsJSON_BasicMap(t *testing.T) {
 	vars := map[string]string{
-		"internal_domain":    "home.lab",
+		"internal_domain":     "home.lab",
 		"bootstrap_server_ip": "192.168.1.1",
 	}
 	out, err := buildExtraVarsJSON(vars)

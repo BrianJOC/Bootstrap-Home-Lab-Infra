@@ -28,9 +28,9 @@ lab_vlan_subnet: "10.0.0.0/24"
 # Admin email (used for ACME registration and Authentik admin account)
 admin_email: "admin@example.com"
 
-# Path where Vault init output (unseal keys + root token) will be written.
-# Store this securely — it is not committed to version control.
-vault_init_output_path: "./vault-init.json"
+# Controller-local path where Vault init output (unseal keys + root token) will
+# be written. Store this securely — it is not committed to version control.
+vault_init_output_path: "/home/user/.bootstrap/vault-init.json"
 
 # ── Optional fields ──────────────────────────────────────────────────────────
 

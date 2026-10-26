@@ -25,7 +25,7 @@ func completeRCm() *config.RunConfig {
 			AdminEmail:          "admin@example.com",
 			VaultShares:         5,
 			VaultThreshold:      3,
-			VaultInitOutputPath: "./vault-init.json",
+			VaultInitOutputPath: "/home/user/.bootstrap/vault-init.json",
 		},
 		Secrets: &config.Secrets{
 			CloudflareAPIToken: "cf-token",

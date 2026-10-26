@@ -83,12 +83,15 @@ func newWizardModel(mode InitialMode, rc *config.RunConfig, resultCh chan config
 		{key: "bootstrap_server_ip", label: "Bootstrap server IP",
 			description: "IP address of this machine (used in Ansible inventory).",
 			example:     "192.168.1.100", validate: validateIP},
+		{key: "vault_init_output_path", label: "Vault recovery file path",
+			description: "Controller-local path for Vault unseal keys and the initial root token. Store it outside this repository.",
+			example:     config.DefaultVaultInitOutputPath(), validate: validateAbsolutePath},
 		{key: "CF_DNS_API_TOKEN", label: "Cloudflare API token",
 			description: "DNS-01 challenge token (needs Zone:DNS:Edit permission).",
-			isSecret: true, validate: validateNonEmpty},
+			isSecret:    true, validate: validateNonEmpty},
 		{key: "BOOTSTRAP_ADMIN_PASSWORD", label: "Admin password",
 			description: "Password for the bootstrapped admin account.",
-			isSecret: true, validate: validateNonEmpty},
+			isSecret:    true, validate: validateNonEmpty},
 	}
 
 	m := &wizardModel{
@@ -111,6 +114,9 @@ func newWizardModel(mode InitialMode, rc *config.RunConfig, resultCh chan config
 	if detectedKey != "" && m.values["ssh_key_path"] == "" {
 		m.values["ssh_key_path"] = detectedKey
 	}
+	if m.values["vault_init_output_path"] == "" {
+		m.values["vault_init_output_path"] = config.DefaultVaultInitOutputPath()
+	}
 
 	m.applyFieldToInput()
 	return m
@@ -130,6 +136,7 @@ func prefillWizard(m *wizardModel, rc *config.RunConfig) {
 	set("bootstrap_server_ip", rc.BootstrapServerIP)
 	set("lab_vlan_subnet", rc.LabVLANSubnet)
 	set("admin_email", rc.AdminEmail)
+	set("vault_init_output_path", rc.VaultInitOutputPath)
 	if rc.Secrets != nil {
 		if rc.Secrets.CloudflareAPIToken != "" {
 			m.secrets["CF_DNS_API_TOKEN"] = rc.Secrets.CloudflareAPIToken
@@ -399,6 +406,16 @@ func validateCIDR(s string) error {
 	}
 	if _, _, err := net.ParseCIDR(strings.TrimSpace(s)); err != nil {
 		return fmt.Errorf("%q is not a valid CIDR (e.g. 10.0.0.0/24)", strings.TrimSpace(s))
+	}
+	return nil
+}
+
+func validateAbsolutePath(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return fmt.Errorf("this field is required")
+	}
+	if !filepath.IsAbs(s) {
+		return fmt.Errorf("%q must be an absolute path", s)
 	}
 	return nil
 }

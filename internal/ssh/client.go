@@ -29,9 +29,10 @@ const (
 
 // Client manages a persistent SSH connection to a target host.
 type Client struct {
-	host   string
-	user   string
-	client *ssh.Client
+	host    string
+	user    string
+	keyPath string
+	client  *ssh.Client
 }
 
 // New creates a new SSH client using key-based authentication only.
@@ -70,11 +71,18 @@ func New(host, user, keyPath string) (*Client, error) {
 	}
 
 	return &Client{
-		host:   host,
-		user:   user,
-		client: client,
+		host:    host,
+		user:    user,
+		keyPath: keyPath,
+		client:  client,
 	}, nil
 }
+
+// User returns the SSH user used by this client.
+func (c *Client) User() string { return c.user }
+
+// KeyPath returns the private key path used by this client.
+func (c *Client) KeyPath() string { return c.keyPath }
 
 // Run executes a command on the remote host with the default 5-minute timeout.
 // Returns stdout, stderr, and any error.

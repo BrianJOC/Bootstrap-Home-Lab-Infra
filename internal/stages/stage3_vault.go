@@ -3,6 +3,8 @@ package stages
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/homelab/bootstrap-home-infra/internal/ansible"
@@ -40,6 +42,10 @@ func (s *VaultStage) Check(_ context.Context, cfg *config.Config, _ *runcontext.
 
 // Run deploys and configures Vault via Ansible.
 func (s *VaultStage) Run(_ context.Context, cfg *config.Config, _ *config.Secrets, _ *runcontext.RunContext, sink stage.Sink) error {
+	if err := ensureVaultInitParent(cfg.VaultInitOutputPath); err != nil {
+		return err
+	}
+
 	client, err := ssh.New(cfg.TargetHost, cfg.SSHUser, cfg.SSHKeyPath)
 	if err != nil {
 		return err
@@ -57,6 +63,23 @@ func (s *VaultStage) Run(_ context.Context, cfg *config.Config, _ *config.Secret
 			"vault_threshold":        intToStr(cfg.VaultThreshold),
 			"admin_email":            cfg.AdminEmail,
 			"vault_init_output_path": cfg.VaultInitOutputPath,
+			"service_data_root":      cfg.DataPath(),
 		},
 	)
+}
+
+// ensureVaultInitParent creates the controller-local directory that receives
+// Vault's unseal keys and root token.
+func ensureVaultInitParent(vaultInitOutputPath string) error {
+	if !filepath.IsAbs(vaultInitOutputPath) {
+		return fmt.Errorf("vault_init_output_path must be an absolute path: %q", vaultInitOutputPath)
+	}
+	parent := filepath.Dir(vaultInitOutputPath)
+	if err := os.MkdirAll(parent, 0700); err != nil {
+		return fmt.Errorf("creating Vault recovery directory %q: %w", parent, err)
+	}
+	if err := os.Chmod(parent, 0700); err != nil {
+		return fmt.Errorf("restricting Vault recovery directory %q: %w", parent, err)
+	}
+	return nil
 }
