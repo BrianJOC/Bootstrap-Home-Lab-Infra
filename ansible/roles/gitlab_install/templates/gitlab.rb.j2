@@ -3,7 +3,9 @@
 
 external_url 'https://gitlab.{{ internal_domain }}'
 
-git_data_dirs({ "default" => { "path" => "{{ (service_data_root + '/gitlab') if service_data_root else '/var/opt/gitlab/git-data' }}" } })
+# NOTE: git_data_dirs was REMOVED in omnibus 18.0 — setting it aborts reconfigure
+# ("Removed configurations found in gitlab.rb"). GitLab uses its default git-data path
+# unless a gitaly['configuration'] storage block overrides it (dual-disk plan).
 
 # Disable bundled PostgreSQL — use shared instance
 postgresql['enable'] = false
@@ -15,8 +17,20 @@ gitlab_rails['db_username'] = 'gitlab'
 gitlab_rails['db_password'] = ENV['GITLAB_DB_PASSWORD']
 
 # TLS configuration — wildcard cert from Stage 2 (lego stores as _.domain.crt)
-nginx['ssl_certificate'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.crt"
-nginx['ssl_certificate_key'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.key"
+# gitlab_rails['nginx'][...] is the omnibus 18 name; the old nginx[...] keys are deprecated.
+gitlab_rails['nginx']['ssl_certificate'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.crt"
+gitlab_rails['nginx']['ssl_certificate_key'] = "{{ gitlab_cert_dir }}/certificates/_.{{ internal_domain }}.key"
+
+# Never attempt public Let's Encrypt — the domain is internal-only and the certs come
+# from Stage 2. Without this, omnibus enables letsencrypt for an https external_url and
+# every reconfigure fails on NXDOMAIN validation.
+letsencrypt['enable'] = false
+
+# Puma listens on 127.0.0.1:8080 by default, which collides with the cloudflare-mock
+# container when the test mocks run on the target (it publishes 0.0.0.0:8080) — puma then
+# boot-loops on Errno::EADDRINUSE and the health check can never pass. Moving the internal
+# port keeps GitLab independent of mock state; nginx/workhorse follow this attribute.
+puma['port'] = 8081
 
 # Authentik OIDC SSO
 gitlab_rails['omniauth_enabled'] = true

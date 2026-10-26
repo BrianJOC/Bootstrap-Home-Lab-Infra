@@ -19,16 +19,28 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
   become: false
 
-# Idempotency gate: check if GitLab is already running
+# Idempotency gate: GitLab counts as installed only when the service stack is up AND the
+# package is fully configured. A half-configured package still runs services, so checking
+# `gitlab-ctl status` alone would skip install.yml and wedge the run behind a 502 from the
+# default config.
 - name: Check if GitLab runsvdir is active
   ansible.builtin.command: gitlab-ctl status
   register: gitlab_status_check
   changed_when: false
   failed_when: false
 
+- name: Check if GitLab CE package is fully configured
+  ansible.builtin.command: dpkg-query -W -f='${Status}' gitlab-ce
+  register: gitlab_pkg_status
+  changed_when: false
+  failed_when: false
+
 - name: Set gitlab_already_running fact
   ansible.builtin.set_fact:
-    gitlab_already_running: "{{ gitlab_status_check.rc == 0 }}"
+    gitlab_already_running: >-
+      {{ gitlab_status_check.rc == 0 and
+         gitlab_pkg_status.rc == 0 and
+         'install ok installed' in gitlab_pkg_status.stdout }}
 
 - name: Install GitLab CE
   ansible.builtin.include_tasks: install.yml

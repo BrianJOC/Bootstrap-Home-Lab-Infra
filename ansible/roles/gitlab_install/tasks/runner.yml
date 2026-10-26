@@ -73,10 +73,16 @@
   register: runner_token_response
   when:
     - gitlab_api_token is defined
-    - "existing_runners.json | selectattr('description', 'equalto', 'bootstrap-runner') | list | length == 0"
+    # POST /user/runners already created the server-side record; the auth token is only
+    # returned once. Gate on the LOCAL registration instead — a record left by a failed
+    # registration attempt must not make this task skip forever.
+    - "'bootstrap-runner' not in (runner_list_check.stdout + runner_list_check.stderr)"
   no_log: true
 
 - name: Register GitLab Runner
+  # GitLab 15.10+ workflow: with a runner authentication token only --description and the
+  # executor may be passed; --tag-list/--run-untagged/--locked/... are set server-side at
+  # token creation (the API task above passes tag_list). Passing them here is FATAL.
   ansible.builtin.command: >
     gitlab-runner register
     --non-interactive
@@ -84,8 +90,6 @@
     --token "{{ runner_token_response.json.token }}"
     --executor shell
     --description bootstrap-runner
-    --tag-list "bootstrap,terraform,ansible"
-    --run-untagged false
   when:
     - runner_token_response is defined
     - runner_token_response.json is defined

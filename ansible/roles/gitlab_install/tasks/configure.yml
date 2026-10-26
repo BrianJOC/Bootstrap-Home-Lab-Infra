@@ -1,4 +1,36 @@
 ---
+# Template gitlab.rb and reconfigure — always, so a package-only or half-configured target
+# converges. gitlab.rb reads GITLAB_DB_PASSWORD / GITLAB_OIDC_SECRET via ENV[], which is
+# why the reconfigure must run from this playbook.
+# NOTE: no `when` here on purpose — a failed reconfigure leaves the template unchanged, so
+# any change-guard would skip the very retry that fixes it (that bug left an empty GitLab DB
+# and a puma boot-loop). Omnibus reconfigure is idempotent (no-op runs ~2 min on this Pi).
+- name: Template GitLab configuration file
+  ansible.builtin.template:
+    src: gitlab.rb.j2
+    dest: "{{ gitlab_config_dir }}/gitlab.rb"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
+- name: Run gitlab-ctl reconfigure
+  ansible.builtin.command: gitlab-ctl reconfigure
+  environment:
+    GITLAB_DB_PASSWORD: "{{ gitlab_db_password }}"
+    GITLAB_OIDC_SECRET: "{{ gitlab_oidc_secret | default('') }}"
+  no_log: true
+  register: gitlab_reconfigure_result
+  changed_when: "'gitlab Reconfigured!' in gitlab_reconfigure_result.stdout"
+  failed_when: gitlab_reconfigure_result.rc != 0
+
+# Omnibus reconfigure does NOT start services that were stopped (it only restarts ones that
+# were running) — after package maintenance or a stopped stack, everything stays down and the
+# health check can never pass. `gitlab-ctl start` is idempotent.
+- name: Ensure GitLab services are running
+  ansible.builtin.command: gitlab-ctl start
+  changed_when: false
+
 # Wait for GitLab health endpoint to respond
 - name: Wait for GitLab to become healthy
   ansible.builtin.uri:
@@ -39,10 +71,11 @@
   register: gitlab_token_create
   changed_when: true
   # gitlab-rails runner exits 0 even on Ruby exceptions — validate the token format.
-  # GitLab 16+ PATs are "glpat-" followed by 20 alphanumeric chars.
+  # PATs are "glpat-" plus a base64url body; GitLab 19's routable tokens also contain a
+  # "." separator (e.g. glpat-<payload>.<crc>, ~51 chars), so accept the full charset.
   failed_when: >
     gitlab_token_create.rc != 0 or
-    not (gitlab_token_create.stdout | trim is match('^glpat-[A-Za-z0-9_-]{20}$'))
+    not (gitlab_token_create.stdout | trim is match('^glpat-[A-Za-z0-9_.-]{20,}$'))
   no_log: true
   when: not gitlab_token_file.stat.exists
 
