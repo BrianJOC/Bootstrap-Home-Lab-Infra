@@ -7,7 +7,7 @@
 
 - name: Assert each database exists
   community.postgresql.postgresql_query:
-    db: "{{ item.name }}"
+    login_db: "{{ item.name }}"
     query: "SELECT 1"
   loop: "{{ postgresql_databases }}"
   become_user: postgres

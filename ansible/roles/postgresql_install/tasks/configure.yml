@@ -37,7 +37,7 @@
 
 - name: Grant service users full privileges on their databases
   community.postgresql.postgresql_privs:
-    db: "{{ item.name }}"
+    login_db: "{{ item.name }}"
     privs: ALL
     type: database
     obj: "{{ item.name }}"
