@@ -15,5 +15,5 @@ output "fabric_id" {
 
 output "vlan_id" {
   description = "MAAS VLAN resource ID (not the 802.1q VLAN tag)"
-  value       = maas_vlan.lab.id
+  value       = local.lab_vlan_id
 }
