@@ -1,4 +1,100 @@
 ---
+# Converge Vault configuration on every run. Everything here is idempotent: dirs,
+# TLS material, vault.hcl, the systemd unit and the service state.
+# The Vault listener binds {{ bootstrap_server_ip }} (see vault.hcl.j2), so all
+# local API calls use that address too — not localhost.
+
+# Create vault system user
+- name: Create vault system user
+  ansible.builtin.user:
+    name: "{{ vault_user }}"
+    system: true
+    shell: /bin/false
+    home: "{{ vault_data_dir }}"
+    create_home: false
+
+# Create required directories
+- name: Create Vault data directory
+  ansible.builtin.file:
+    path: "{{ vault_data_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+- name: Create Vault config directory
+  ansible.builtin.file:
+    path: "{{ vault_config_dir }}"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+- name: Create Vault TLS directory
+  ansible.builtin.file:
+    path: "{{ vault_config_dir }}/tls"
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+- name: Create Vault log directory
+  ansible.builtin.file:
+    path: /var/log/vault
+    state: directory
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0750"
+
+# Copy TLS certs to vault config path.
+# lego stores wildcard certs with '*' replaced by '_' in the filename.
+- name: Copy TLS cert to Vault TLS dir
+  ansible.builtin.copy:
+    src: "{{ vault_cert_dir }}/certificates/_.{{ internal_domain }}.crt"
+    dest: "{{ vault_config_dir }}/tls/fullchain.pem"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0644"
+    remote_src: true
+  notify: restart vault
+
+- name: Copy TLS private key to Vault TLS dir
+  ansible.builtin.copy:
+    src: "{{ vault_cert_dir }}/certificates/_.{{ internal_domain }}.key"
+    dest: "{{ vault_config_dir }}/tls/privkey.pem"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0400"
+    remote_src: true
+  notify: restart vault
+
+# Template vault.hcl config
+- name: Template Vault configuration file
+  ansible.builtin.template:
+    src: vault.hcl.j2
+    dest: "{{ vault_config_dir }}/vault.hcl"
+    owner: "{{ vault_user }}"
+    group: "{{ vault_user }}"
+    mode: "0640"
+  notify: restart vault
+
+# Template systemd unit
+- name: Template Vault systemd service unit
+  ansible.builtin.template:
+    src: vault.service.j2
+    dest: /etc/systemd/system/vault.service
+    mode: "0644"
+  notify: restart vault
+
+- name: Reload systemd daemon
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+# Apply any pending config restarts BEFORE the service start / init / unseal below,
+# so a handler flush at end of play cannot restart (and reseal) a freshly-unsealed Vault.
+- name: Flush handlers so Vault picks up final config before initialization
+  ansible.builtin.meta: flush_handlers
+
 # Start vault service
 - name: Start Vault service
   ansible.builtin.systemd:
@@ -7,11 +103,11 @@
     enabled: true
 
 # Wait for vault to be ready (sealed state is OK at this point).
-# validate_certs: false is unavoidable here — Vault's TLS cert is signed by the
-# internal CA that Vault itself will later manage. This is only used at bootstrap.
+# validate_certs: false is unavoidable here — Vault's TLS cert is for the internal
+# domain, so IP-address checks cannot verify. This is only used at bootstrap.
 - name: Wait for Vault API to respond
   ansible.builtin.uri:
-    url: "https://localhost:{{ vault_port }}/v1/sys/health"
+    url: "https://{{ bootstrap_server_ip }}:{{ vault_port }}/v1/sys/health"
     method: GET
     validate_certs: false
     status_code: [200, 429, 472, 473, 501, 503]
@@ -23,7 +119,7 @@
 # Check if vault is already initialized
 - name: Check Vault initialization status
   ansible.builtin.uri:
-    url: "https://localhost:{{ vault_port }}/v1/sys/init"
+    url: "https://{{ bootstrap_server_ip }}:{{ vault_port }}/v1/sys/init"
     method: GET
     validate_certs: false
     status_code: [200]
@@ -52,7 +148,7 @@
   when: not vault_initialized
   no_log: true
   environment:
-    VAULT_ADDR: "https://localhost:{{ vault_port }}"
+    VAULT_ADDR: "https://{{ bootstrap_server_ip }}:{{ vault_port }}"
     VAULT_SKIP_VERIFY: "true"
   changed_when: true
 

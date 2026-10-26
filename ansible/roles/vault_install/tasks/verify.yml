@@ -7,7 +7,7 @@
 
 - name: Assert Vault API responds (sealed state is acceptable here)
   ansible.builtin.uri:
-    url: "https://localhost:{{ vault_port }}/v1/sys/health"
+    url: "https://{{ bootstrap_server_ip }}:{{ vault_port }}/v1/sys/health"
     method: GET
     validate_certs: false
     status_code: [200, 429, 472, 473, 501, 503]
