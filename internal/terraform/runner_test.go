@@ -299,14 +299,18 @@ func TestLocalInitDiscardsStaleRemoteBackendMetadata(t *testing.T) {
 	}
 }
 
-func TestMigrationInitSkipsMockTLSOnlyForLocalhost(t *testing.T) {
-	local := strings.Join(migrationInitArgs("https://127.0.0.1:18443"), " ")
+func TestMigrationInitSkipsTLSOnlyForLoopbackOrOptIn(t *testing.T) {
+	local := strings.Join(migrationInitArgs("https://127.0.0.1:18443", false), " ")
 	if !strings.Contains(local, "-backend-config=skip_cert_verification=true") {
 		t.Fatalf("localhost migration did not enable the explicit test TLS override: %s", local)
 	}
-	production := strings.Join(migrationInitArgs("https://gitlab.home.example.com"), " ")
+	production := strings.Join(migrationInitArgs("https://gitlab.home.example.com", false), " ")
 	if strings.Contains(production, "skip_cert_verification") {
 		t.Fatalf("production migration disabled TLS verification: %s", production)
+	}
+	opted := strings.Join(migrationInitArgs("https://gitlab.home.example.com", true), " ")
+	if !strings.Contains(opted, "-backend-config=skip_cert_verification=true") {
+		t.Fatalf("BOOTSTRAP_API_INSECURE did not reach the state backend: %s", opted)
 	}
 }
 

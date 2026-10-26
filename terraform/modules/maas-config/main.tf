@@ -28,7 +28,12 @@ resource "maas_fabric" "homelab" {
   name = "homelab-fabric"
 }
 
+# lab_vlan_id 0 means "untagged" (documented in README/config.yaml.example). Every MAAS
+# fabric already owns an untagged VLAN with vid 0, and MAAS rejects creating another one
+# ("vid: This field is required. VID must be between 0 and 4094."), so a 0 value adopts the
+# fabric's existing untagged VLAN instead of creating a tagged one.
 resource "maas_vlan" "lab" {
+  count  = var.lab_vlan_id > 0 ? 1 : 0
   fabric = maas_fabric.homelab.id
   vid    = var.lab_vlan_id
   name   = "lab-vlan"
@@ -36,10 +41,20 @@ resource "maas_vlan" "lab" {
   mtu    = 1500
 }
 
+data "maas_vlan" "untagged" {
+  count  = var.lab_vlan_id > 0 ? 0 : 1
+  fabric = maas_fabric.homelab.id
+  vlan   = "0"
+}
+
+locals {
+  lab_vlan_id = var.lab_vlan_id > 0 ? maas_vlan.lab[0].id : data.maas_vlan.untagged[0].id
+}
+
 resource "maas_subnet" "lab" {
   cidr        = var.lab_subnet
   fabric      = maas_fabric.homelab.id
-  vlan        = maas_vlan.lab.id
+  vlan        = local.lab_vlan_id
   name        = "lab-subnet"
   gateway_ip  = var.lab_gateway
   dns_servers = [var.dns_server]

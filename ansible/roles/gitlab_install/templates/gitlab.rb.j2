@@ -26,6 +26,11 @@ gitlab_rails['db_password'] = File.read('/etc/bootstrap-home-infra/gitlab-db-pas
 gitlab_rails['nginx']['listen_port'] = 8181
 gitlab_rails['nginx']['listen_https'] = false
 gitlab_rails['nginx']['redirect_http_to_https'] = false
+
+# Puma's default port 8080 collides with the Cloudflare mock when the test mocks run on
+# the target (that container publishes 0.0.0.0:8080), which leaves workhorse's upstream
+# stale and every request 502s. The host nginx vhost proxies 8181, so keep Puma on 8081.
+puma['port'] = 8081
 # GitLab always trusts both localhost families. Keep only the explicit IPv4
 # proxy here because Omnibus 19.3 renders an explicit IPv6 entry as a YAML
 # symbol, which Rails cannot pass to IPAddr.

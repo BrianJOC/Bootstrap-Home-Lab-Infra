@@ -136,5 +136,6 @@ vault kv put %q value=@"$KUBECONFIG_FILE" >/dev/null
 		gitlabBaseURL(cfg),
 		projectID,
 		strings.TrimSpace(string(gitlabToken)),
+		cfg.APIInsecure,
 	)
 }
