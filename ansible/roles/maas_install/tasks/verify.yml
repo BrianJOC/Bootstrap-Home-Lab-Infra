@@ -16,7 +16,9 @@
 
 - name: Assert MAAS API v2.0 responds
   ansible.builtin.uri:
-    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/"
+    # The API root 404s for unauthenticated requests on this MAAS version;
+    # /version/ is the unauthenticated endpoint that returns 200.
+    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/version/"
     method: GET
     status_code: [200]
     validate_certs: false

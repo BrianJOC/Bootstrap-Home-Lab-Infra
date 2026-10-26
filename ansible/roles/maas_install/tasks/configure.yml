@@ -3,7 +3,9 @@
 # Uses the same ~/.bootstrap/pg-maas-password written by postgresql_install.
 - name: Set MAAS database URI fact
   ansible.builtin.set_fact:
-    maas_db_uri: "postgresql://maas:{{ maas_db_password }}@{{ bootstrap_server_ip }}/maas"
+    # MAAS (snap) only accepts the postgres:// scheme — postgresql:// is rejected with
+    # "Database URI needs to be either 'maas-test-db:///' or start with 'postgres://'".
+    maas_db_uri: "postgres://maas:{{ maas_db_password }}@{{ bootstrap_server_ip }}/maas"
   no_log: true
 
 # Check if MAAS is already initialized
@@ -50,7 +52,9 @@
 # Wait for MAAS API to be ready
 - name: Wait for MAAS API to be ready
   ansible.builtin.uri:
-    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/"
+    # The API root returns 404 on this MAAS version for unauthenticated requests;
+    # /version/ is the unauthenticated readiness endpoint (returns 200).
+    url: "http://localhost:{{ maas_port }}/MAAS/api/2.0/version/"
     method: GET
     status_code: [200]
     validate_certs: false
