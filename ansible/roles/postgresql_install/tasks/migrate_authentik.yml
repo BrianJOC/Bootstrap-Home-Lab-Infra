@@ -54,7 +54,7 @@
 # but leave Authentik regenerating its schema on first boot, losing all configuration.
 - name: Verify restore — assert django_content_type table populated
   community.postgresql.postgresql_query:
-    db: authentik
+    login_db: authentik
     login_host: "{{ bootstrap_server_ip }}"
     login_user: authentik
     login_password: "{{ authentik_db_password }}"

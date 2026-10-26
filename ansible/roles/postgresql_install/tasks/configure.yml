@@ -10,14 +10,11 @@
   become_user: postgres
   no_log: true
 
-# Create service databases and users
-- name: Create service databases
-  community.postgresql.postgresql_db:
-    name: "{{ item.name }}"
-    state: present
-  loop: "{{ postgresql_databases }}"
-  become_user: postgres
-
+# Create service users first, then databases owned by them. PostgreSQL 15+ revoked the
+# default CREATE grant on schema public, and "ALL ON DATABASE" does not cover schema-level
+# CREATE — so a non-owner service user cannot load GitLab's schema
+# ("permission denied for schema public"). Making the service user the database owner
+# covers schema public via pg_database_owner.
 - name: Create service users
   community.postgresql.postgresql_user:
     name: "{{ item.user }}"
@@ -27,9 +24,17 @@
   become_user: postgres
   no_log: true
 
+- name: Create service databases owned by their service users
+  community.postgresql.postgresql_db:
+    name: "{{ item.name }}"
+    owner: "{{ item.user }}"
+    state: present
+  loop: "{{ postgresql_databases }}"
+  become_user: postgres
+
 - name: Grant service users full privileges on their databases
   community.postgresql.postgresql_privs:
-    db: "{{ item.name }}"
+    login_db: "{{ item.name }}"
     privs: ALL
     type: database
     obj: "{{ item.name }}"
@@ -58,6 +63,17 @@
     dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
     regexp: "^#?listen_addresses\\s*="
     line: "listen_addresses = 'localhost,{{ bootstrap_server_ip }}'"
+    state: present
+  notify: restart postgresql
+
+# GitLab loads its full schema in a single transaction; the Ubuntu default of 64 locks
+# per transaction overflows mid-load ("out of shared memory" at structure.sql). 128 is
+# GitLab's documented value for shared/external PostgreSQL.
+- name: Configure PostgreSQL max_locks_per_transaction for GitLab schema load
+  ansible.builtin.lineinfile:
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+    regexp: "^#?max_locks_per_transaction\\s*="
+    line: "max_locks_per_transaction = 128"
     state: present
   notify: restart postgresql
 
